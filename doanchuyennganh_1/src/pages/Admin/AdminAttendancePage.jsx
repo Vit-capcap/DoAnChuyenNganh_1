@@ -499,6 +499,7 @@ export default function AdminAttendancePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
+    
       <Sidebar activePage="attendance" />
 
       <div className="flex-1 md:ml-[280px] flex flex-col min-h-screen">
