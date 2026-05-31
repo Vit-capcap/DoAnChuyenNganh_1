@@ -3,7 +3,21 @@ import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../components/admin/Sidebar";
 import Header from "../components/admin/Header";
 
-const API_URL = "http://localhost:3060/api";
+import CameraStats from "../components/admin/CameraStats";
+import CameraFilters from "../components/admin/CameraFilters";
+import CameraGrid from "../components/admin/CameraGrid";
+import CameraActivityPanel from "../components/admin/CameraActivityPanel";
+import CameraModal from "../components/admin/CameraModal";
+
+import {
+  getCameraOptions,
+  getCameras,
+  createCamera,
+  updateCamera,
+  updateCameraStatus,
+  deleteCameraById,
+  normalizeList,
+} from "../../api/cameraApi";
 
 const initialForm = {
   id_camera: "",
@@ -14,14 +28,27 @@ const initialForm = {
   status: "ONLINE",
 };
 
+const emptyStats = {
+  total_camera: 0,
+  online_camera: 0,
+  offline_camera: 0,
+  today_faces: 0,
+  today_accuracy: 0,
+};
+
+function normalizeStats(data) {
+  return {
+    ...emptyStats,
+    ...(data?.stats || {}),
+  };
+}
+
 function formatTime(value) {
   if (!value) return "--:--";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return "--:--";
-  }
+  if (Number.isNaN(date.getTime())) return "--:--";
 
   return date.toLocaleTimeString("vi-VN", {
     hour: "2-digit",
@@ -31,13 +58,14 @@ function formatTime(value) {
 }
 
 function getRoomLabel(camera) {
-  if (camera.room_code || camera.room_name) {
-    return `${camera.room_code || ""}${
-      camera.room_name ? ` - ${camera.room_name}` : ""
-    }`;
+  const roomCode = camera?.room_code || "";
+  const roomName = camera?.room_name || "";
+
+  if (roomCode || roomName) {
+    return `${roomCode}${roomName ? ` - ${roomName}` : ""}`;
   }
 
-  return camera.location || "Chưa gán phòng";
+  return camera?.location || "Chưa gán phòng";
 }
 
 function getCameraPlaceholder(camera) {
@@ -46,25 +74,22 @@ function getCameraPlaceholder(camera) {
 }
 
 function getStudentName(activity) {
-  if (activity.full_name) return activity.full_name;
-
-  if (activity.result === "FAILED") return "Khuôn mặt không xác định";
-
+  if (activity?.full_name) return activity.full_name;
+  if (activity?.student_code) return activity.student_code;
+  if (activity?.result === "FAILED") return "Khuôn mặt không xác định";
   return "Chưa xác định";
+}
+
+function safePercent(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toFixed(1) : "0.0";
 }
 
 export default function AdminCameraMonitorPage() {
   const [cameras, setCameras] = useState([]);
   const [activities, setActivities] = useState([]);
   const [rooms, setRooms] = useState([]);
-
-  const [stats, setStats] = useState({
-    total_camera: 0,
-    online_camera: 0,
-    offline_camera: 0,
-    today_faces: 0,
-    today_accuracy: 0,
-  });
+  const [stats, setStats] = useState(emptyStats);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -78,84 +103,69 @@ export default function AdminCameraMonitorPage() {
   const [modalMode, setModalMode] = useState("add");
   const [formData, setFormData] = useState(initialForm);
   const [saving, setSaving] = useState(false);
-
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
 
-    const loadOptions = async () => {
+    async function loadOptions() {
       try {
-        const res = await fetch(`${API_URL}/cameras/options`);
-        const data = await res.json();
+        const data = await getCameraOptions();
 
-        if (!res.ok) {
-          throw new Error(data.message || "Không thể tải phòng học");
-        }
+        if (!isMounted) return;
 
-        if (isMounted) {
-          setRooms(Array.isArray(data.rooms) ? data.rooms : []);
-        }
+        setRooms(normalizeList(data, "rooms"));
       } catch (error) {
-        console.error("Lỗi tải options camera:", error);
+        console.error("Lỗi tải phòng học:", error);
 
         if (isMounted) {
-          setMessage(error.message || "Không thể tải dữ liệu phòng học");
+          setRooms([]);
+          setMessage(error.message || "Không thể tải danh sách phòng học");
         }
       }
-    };
+    }
 
     loadOptions();
 
     return () => {
       isMounted = false;
     };
-  }, [refreshKey]);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
+    const controller = new AbortController();
 
-    const loadCameras = async () => {
+    async function loadCameras() {
       try {
-        const params = new URLSearchParams();
-
-        if (search.trim()) {
-          params.append("search", search.trim());
+        if (refreshKey === 0) {
+          setLoading(true);
         }
 
-        if (statusFilter) {
-          params.append("status", statusFilter);
-        }
+        const data = await getCameras(
+          {
+            search,
+            status: statusFilter,
+            id_room: roomFilter,
+          },
+          controller.signal
+        );
 
-        if (roomFilter) {
-          params.append("id_room", roomFilter);
-        }
+        if (!isMounted) return;
 
-        const res = await fetch(`${API_URL}/cameras?${params.toString()}`);
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.message || "Không thể tải danh sách camera");
-        }
-
-        if (isMounted) {
-          setCameras(Array.isArray(data.cameras) ? data.cameras : []);
-          setActivities(Array.isArray(data.activities) ? data.activities : []);
-          setStats(
-            data.stats || {
-              total_camera: 0,
-              online_camera: 0,
-              offline_camera: 0,
-              today_faces: 0,
-              today_accuracy: 0,
-            }
-          );
-          setMessage("");
-        }
+        setCameras(normalizeList(data, "cameras"));
+        setActivities(normalizeList(data, "activities"));
+        setStats(normalizeStats(data));
+        setMessage("");
       } catch (error) {
+        if (error.name === "AbortError") return;
+
         console.error("Lỗi tải camera:", error);
 
         if (isMounted) {
+          setCameras([]);
+          setActivities([]);
+          setStats(emptyStats);
           setMessage(error.message || "Không thể tải danh sách camera");
         }
       } finally {
@@ -163,14 +173,13 @@ export default function AdminCameraMonitorPage() {
           setLoading(false);
         }
       }
-    };
+    }
 
-    const timeoutId = setTimeout(() => {
-      loadCameras();
-    }, 300);
+    const timeoutId = setTimeout(loadCameras, 300);
 
     return () => {
       isMounted = false;
+      controller.abort();
       clearTimeout(timeoutId);
     };
   }, [search, statusFilter, roomFilter, refreshKey]);
@@ -182,9 +191,7 @@ export default function AdminCameraMonitorPage() {
       setRefreshKey((prev) => prev + 1);
     }, 10000);
 
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [autoRefresh]);
 
   const statCards = useMemo(
@@ -192,18 +199,23 @@ export default function AdminCameraMonitorPage() {
       {
         title: "Tổng camera",
         value: stats.total_camera || 0,
+        icon: "videocam",
+        textClass: "text-slate-900",
+        bgClass: "bg-blue-50 text-blue-600",
       },
       {
         title: "Đang hoạt động",
         value: stats.online_camera || 0,
-        status: "Online",
-        color: "green",
+        icon: "sensors",
+        textClass: "text-emerald-600",
+        bgClass: "bg-emerald-50 text-emerald-600",
       },
       {
         title: "Ngoại tuyến",
         value: stats.offline_camera || 0,
-        status: "Offline",
-        color: "red",
+        icon: "videocam_off",
+        textClass: "text-rose-600",
+        bgClass: "bg-rose-50 text-rose-600",
       },
     ],
     [stats]
@@ -233,6 +245,8 @@ export default function AdminCameraMonitorPage() {
   };
 
   const closeModal = () => {
+    if (saving) return;
+
     setShowModal(false);
     setFormData(initialForm);
   };
@@ -257,7 +271,22 @@ export default function AdminCameraMonitorPage() {
       return false;
     }
 
+    if (!formData.status) {
+      setMessage("Vui lòng chọn trạng thái camera");
+      return false;
+    }
+
     return true;
+  };
+
+  const buildPayload = () => {
+    return {
+      camera_name: formData.camera_name.trim(),
+      camera_ip: formData.camera_ip.trim(),
+      location: formData.location.trim() || null,
+      id_room: formData.id_room ? Number(formData.id_room) : null,
+      status: formData.status || "ONLINE",
+    };
   };
 
   const handleSubmit = async (e) => {
@@ -270,39 +299,16 @@ export default function AdminCameraMonitorPage() {
     try {
       setSaving(true);
 
-      const payload = {
-        camera_name: formData.camera_name,
-        camera_ip: formData.camera_ip,
-        location: formData.location || null,
-        id_room: formData.id_room || null,
-        status: formData.status || "ONLINE",
-      };
-
-      const url =
+      const data =
         modalMode === "add"
-          ? `${API_URL}/cameras`
-          : `${API_URL}/cameras/${formData.id_camera}`;
-
-      const method = modalMode === "add" ? "POST" : "PUT";
-
-      const res = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Lưu camera thất bại");
-      }
+          ? await createCamera(buildPayload())
+          : await updateCamera(formData.id_camera, buildPayload());
 
       alert(
-        modalMode === "add"
-          ? "Thêm camera thành công"
-          : "Cập nhật camera thành công"
+        data?.message ||
+          (modalMode === "add"
+            ? "Thêm camera thành công"
+            : "Cập nhật camera thành công")
       );
 
       closeModal();
@@ -326,23 +332,9 @@ export default function AdminCameraMonitorPage() {
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      const res = await fetch(`${API_URL}/cameras/${camera.id_camera}/status`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          status: nextStatus,
-        }),
-      });
+      const data = await updateCameraStatus(camera.id_camera, nextStatus);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Đổi trạng thái camera thất bại");
-      }
-
-      alert(data.message || "Cập nhật trạng thái camera thành công");
+      alert(data?.message || "Cập nhật trạng thái camera thành công");
       setRefreshKey((prev) => prev + 1);
     } catch (error) {
       console.error("Lỗi đổi trạng thái camera:", error);
@@ -358,17 +350,9 @@ export default function AdminCameraMonitorPage() {
     if (!confirmDelete) return;
 
     try {
-      const res = await fetch(`${API_URL}/cameras/${camera.id_camera}`, {
-        method: "DELETE",
-      });
+      const data = await deleteCameraById(camera.id_camera);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Xóa camera thất bại");
-      }
-
-      alert("Xóa camera thành công");
+      alert(data?.message || "Xóa camera thành công");
       setRefreshKey((prev) => prev + 1);
     } catch (error) {
       console.error("Lỗi xóa camera:", error);
@@ -383,28 +367,30 @@ export default function AdminCameraMonitorPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-gray-900 flex">
-      <Sidebar activePage="camera" />
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex">
+      <Sidebar activePage="cameras" />
 
       <div className="flex-1 md:ml-[280px] flex flex-col min-h-screen">
         <Header />
 
-        <main className="flex-1 p-4 md:p-6 bg-[#111827] relative overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-[120px]" />
-            <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-cyan-500/10 rounded-full blur-[100px]" />
-          </div>
-
-          <div className="relative z-10 flex flex-col gap-6">
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+        <main className="flex-1 p-4 md:p-6">
+          <div className="mb-6 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500 p-6 text-white shadow-lg shadow-blue-100">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
               <div>
-                <h2 className="text-3xl font-bold text-white">
+                <div className="flex items-center gap-2 text-blue-100 text-sm mb-2">
+                  <span className="material-symbols-outlined text-[18px]">
+                    linked_camera
+                  </span>
+                  Giám sát camera AI
+                </div>
+
+                <h2 className="text-3xl font-bold tracking-tight">
                   Camera AI Monitor
                 </h2>
 
-                <p className="text-sm text-gray-400 mt-1">
-                  Giám sát camera AI và luồng nhận diện khuôn mặt theo thời gian
-                  thực.
+                <p className="text-sm text-blue-100 mt-2 max-w-2xl">
+                  Giám sát camera AI, trạng thái thiết bị và luồng nhận diện
+                  khuôn mặt theo thời gian thực.
                 </p>
               </div>
 
@@ -412,13 +398,17 @@ export default function AdminCameraMonitorPage() {
                 <button
                   type="button"
                   onClick={() => setAutoRefresh((prev) => !prev)}
-                  className={`px-4 py-3 rounded-xl text-sm font-semibold flex items-center gap-2 border ${
+                  className={`px-4 py-3 rounded-2xl text-sm font-semibold flex items-center gap-2 border transition ${
                     autoRefresh
-                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
-                      : "bg-white/10 text-gray-300 border-white/10"
+                      ? "bg-emerald-500/20 text-emerald-100 border-emerald-300/30"
+                      : "bg-white/15 text-white border-white/20 hover:bg-white/25"
                   }`}
                 >
-                  <span className="material-symbols-outlined text-[20px]">
+                  <span
+                    className={`material-symbols-outlined text-[20px] ${
+                      autoRefresh ? "animate-spin" : ""
+                    }`}
+                  >
                     sync
                   </span>
                   Auto refresh {autoRefresh ? "ON" : "OFF"}
@@ -427,7 +417,7 @@ export default function AdminCameraMonitorPage() {
                 <button
                   type="button"
                   onClick={() => setRefreshKey((prev) => prev + 1)}
-                  className="bg-white/10 hover:bg-white/15 text-white border border-white/10 px-4 py-3 rounded-xl text-sm font-semibold flex items-center gap-2"
+                  className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-3 rounded-2xl text-sm font-semibold flex items-center gap-2 transition"
                 >
                   <span className="material-symbols-outlined text-[20px]">
                     refresh
@@ -438,7 +428,7 @@ export default function AdminCameraMonitorPage() {
                 <button
                   type="button"
                   onClick={openAddModal}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl text-sm font-semibold flex items-center gap-2"
+                  className="bg-white text-blue-700 px-5 py-3 rounded-2xl flex items-center gap-2 text-sm font-bold hover:bg-blue-50 transition shadow-sm"
                 >
                   <span className="material-symbols-outlined text-[20px]">
                     videocam
@@ -447,533 +437,73 @@ export default function AdminCameraMonitorPage() {
                 </button>
               </div>
             </div>
-
-            {message && (
-              <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-200">
-                {message}
-              </div>
-            )}
-
-            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                    search
-                  </span>
-
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Tìm camera, IP, phòng..."
-                    className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/10 rounded-xl text-sm text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Tất cả trạng thái</option>
-                  <option value="ONLINE">Online</option>
-                  <option value="OFFLINE">Offline</option>
-                </select>
-
-                <select
-                  value={roomFilter}
-                  onChange={(e) => setRoomFilter(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Tất cả phòng</option>
-                  {rooms.map((room) => (
-                    <option key={room.id_room} value={room.id_room}>
-                      {room.room_code} - {room.room_name}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  className="px-4 py-3 bg-white/10 hover:bg-white/15 text-gray-200 border border-white/10 rounded-xl text-sm font-semibold"
-                >
-                  Xóa lọc
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              {statCards.map((item, index) => (
-                <div
-                  key={index}
-                  className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4"
-                >
-                  <span className="text-xs font-semibold text-gray-400">
-                    {item.title}
-                  </span>
-
-                  <div className="flex items-center gap-3 mt-2">
-                    <span className="text-4xl font-bold text-white">
-                      {item.value}
-                    </span>
-
-                    {item.status && (
-                      <span
-                        className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border ${
-                          item.color === "green"
-                            ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                            : "bg-red-500/20 text-red-400 border-red-500/30"
-                        }`}
-                      >
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            item.color === "green"
-                              ? "bg-emerald-400"
-                              : "bg-red-400"
-                          }`}
-                        />
-                        {item.status}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 lg:col-span-2">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-xs font-semibold text-gray-400">
-                      Số khuôn mặt nhận diện hôm nay
-                    </span>
-
-                    <div className="text-4xl font-bold text-white mt-2">
-                      {stats.today_faces || 0}
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <span className="text-xs font-semibold text-gray-400">
-                      AI Accuracy
-                    </span>
-
-                    <div className="text-2xl font-bold text-cyan-400 mt-2">
-                      {Number(stats.today_accuracy || 0).toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-6 text-gray-300 text-sm font-semibold">
-                Đang tải danh sách camera...
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {cameras.length === 0 ? (
-                    <div className="md:col-span-2 bg-white/10 border border-white/10 rounded-2xl p-8 text-center text-gray-300">
-                      Không có camera nào.
-                    </div>
-                  ) : (
-                    cameras.map((camera) => {
-                      const online = camera.status === "ONLINE";
-
-                      return (
-                        <div
-                          key={camera.id_camera}
-                          className={`relative rounded-2xl overflow-hidden border border-white/10 aspect-video group ${
-                            online ? "bg-black" : "bg-white/5"
-                          }`}
-                        >
-                          {online ? (
-                            <>
-                              <div
-                                className="absolute inset-0 bg-cover bg-center opacity-80"
-                                style={{
-                                  backgroundImage: `url(${getCameraPlaceholder(
-                                    camera
-                                  )})`,
-                                }}
-                              />
-
-                              <div className="absolute inset-0 bg-gradient-to-br from-black/20 via-transparent to-black/50" />
-
-                              <div className="absolute inset-0 pointer-events-none">
-                                {Number(camera.today_recognition_count || 0) > 0 && (
-                                  <>
-                                    <div
-                                      className="absolute border-2 border-cyan-400/80 bg-cyan-400/10"
-                                      style={{
-                                        top: "28%",
-                                        left: "38%",
-                                        width: "18%",
-                                        height: "28%",
-                                      }}
-                                    >
-                                      <div className="absolute -top-6 left-0 bg-cyan-400/80 text-black text-[10px] px-1 font-semibold">
-                                        ID: AI
-                                      </div>
-                                    </div>
-
-                                    <div
-                                      className="absolute border-2 border-cyan-400/80 bg-cyan-400/10"
-                                      style={{
-                                        top: "42%",
-                                        left: "60%",
-                                        width: "12%",
-                                        height: "20%",
-                                      }}
-                                    />
-                                  </>
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="text-center text-gray-400">
-                                <span className="material-symbols-outlined text-[48px] mb-2 opacity-50">
-                                  videocam_off
-                                </span>
-                                <p className="text-sm font-semibold text-red-300">
-                                  Signal Lost
-                                </p>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/80 to-transparent flex justify-between items-start">
-                            <div>
-                              <h3 className="text-sm font-semibold text-white">
-                                {camera.camera_name}
-                              </h3>
-
-                              <span className="text-[11px] text-gray-300">
-                                IP: {camera.camera_ip || "-"} •{" "}
-                                {getRoomLabel(camera)}
-                              </span>
-                            </div>
-
-                            <div
-                              className={`w-3 h-3 rounded-full ${
-                                online
-                                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"
-                                  : "bg-red-500"
-                              }`}
-                            />
-                          </div>
-
-                          <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between">
-                            <div className="text-xs text-gray-300">
-                              Nhận diện hôm nay:{" "}
-                              <span className="text-cyan-300 font-semibold">
-                                {camera.today_recognition_count || 0}
-                              </span>
-                              {" "}• Avg:{" "}
-                              <span className="text-cyan-300 font-semibold">
-                                {Number(camera.avg_confidence || 0).toFixed(1)}%
-                              </span>
-                            </div>
-
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
-                              <button
-                                type="button"
-                                onClick={() => openEditModal(camera)}
-                                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-blue-500/30 text-white flex items-center justify-center"
-                                title="Sửa camera"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">
-                                  edit
-                                </span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => toggleCameraStatus(camera)}
-                                className={`w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center ${
-                                  online
-                                    ? "hover:bg-red-500/30 text-red-200"
-                                    : "hover:bg-emerald-500/30 text-emerald-200"
-                                }`}
-                                title={online ? "Tắt camera" : "Bật camera"}
-                              >
-                                <span className="material-symbols-outlined text-[18px]">
-                                  {online ? "videocam_off" : "videocam"}
-                                </span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => deleteCamera(camera)}
-                                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-red-500/30 text-red-200 flex items-center justify-center"
-                                title="Xóa camera"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">
-                                  delete
-                                </span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col min-h-[360px]">
-                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
-                    <h2 className="text-xl font-bold text-white">
-                      Luồng hoạt động
-                    </h2>
-
-                    <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30">
-                      <span className="w-2 h-2 rounded-full bg-blue-300" />
-                      Live
-                    </span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto space-y-2">
-                    {activities.length === 0 ? (
-                      <div className="text-sm text-gray-400">
-                        Chưa có lịch sử nhận diện.
-                      </div>
-                    ) : (
-                      activities.map((item) => (
-                        <div
-                          key={item.id_history}
-                          className="flex items-start gap-3 p-3 rounded-xl hover:bg-white/5 transition"
-                        >
-                          <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
-                              item.result === "SUCCESS"
-                                ? "bg-cyan-500/20 border-cyan-500/30"
-                                : "bg-red-500/20 border-red-500/30"
-                            }`}
-                          >
-                            <span
-                              className={`material-symbols-outlined text-[18px] ${
-                                item.result === "SUCCESS"
-                                  ? "text-cyan-400"
-                                  : "text-red-300"
-                              }`}
-                            >
-                              {item.result === "SUCCESS" ? "face" : "warning"}
-                            </span>
-                          </div>
-
-                          <div>
-                            <p className="text-sm font-semibold text-white">
-                              {getStudentName(item)}
-                            </p>
-
-                            <div className="flex flex-wrap items-center gap-1 text-gray-400 text-xs mt-1">
-                              <span className="material-symbols-outlined text-[12px]">
-                                schedule
-                              </span>
-                              {formatTime(item.capture_time)}
-
-                              <span className="material-symbols-outlined text-[12px] ml-2">
-                                location_on
-                              </span>
-                              {item.room_code || item.location || "Không rõ"}
-
-                              {item.confidence !== null &&
-                                item.confidence !== undefined && (
-                                  <span className="ml-2 text-cyan-300">
-                                    {Number(item.confidence).toFixed(1)}%
-                                  </span>
-                                )}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {showModal && (
-              <CameraModal
-                mode={modalMode}
-                formData={formData}
-                rooms={rooms}
-                saving={saving}
-                onChange={handleChange}
-                onClose={closeModal}
-                onSubmit={handleSubmit}
-              />
-            )}
           </div>
+
+          {message && (
+            <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 flex items-start gap-2">
+              <span className="material-symbols-outlined text-[20px]">
+                error
+              </span>
+              <span>{message}</span>
+            </div>
+          )}
+
+          <div className="space-y-6">
+            <CameraFilters
+              search={search}
+              setSearch={setSearch}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              roomFilter={roomFilter}
+              setRoomFilter={setRoomFilter}
+              rooms={rooms}
+              onReset={resetFilters}
+            />
+
+            <CameraStats
+              stats={stats}
+              statCards={statCards}
+              safePercent={safePercent}
+            />
+
+            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+              <div className="xl:col-span-3">
+                <CameraGrid
+                  cameras={cameras}
+                  loading={loading}
+                  getRoomLabel={getRoomLabel}
+                  getCameraPlaceholder={getCameraPlaceholder}
+                  safePercent={safePercent}
+                  onEdit={openEditModal}
+                  onToggleStatus={toggleCameraStatus}
+                  onDelete={deleteCamera}
+                />
+              </div>
+
+              <div className="xl:col-span-1">
+                <CameraActivityPanel
+                  activities={activities}
+                  getStudentName={getStudentName}
+                  formatTime={formatTime}
+                  safePercent={safePercent}
+                />
+              </div>
+            </div>
+          </div>
+
+          {showModal && (
+            <CameraModal
+              mode={modalMode}
+              formData={formData}
+              rooms={rooms}
+              saving={saving}
+              onChange={handleChange}
+              onClose={closeModal}
+              onSubmit={handleSubmit}
+            />
+          )}
         </main>
       </div>
-    </div>
-  );
-}
-
-function CameraModal({
-  mode,
-  formData,
-  rooms,
-  saving,
-  onChange,
-  onClose,
-  onSubmit,
-}) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h3 className="text-xl font-bold text-gray-900">
-              {mode === "add" ? "Thêm camera" : "Chỉnh sửa camera"}
-            </h3>
-
-            <p className="text-sm text-gray-500 mt-1">
-              Cấu hình camera giám sát cho phòng học.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-gray-100 text-gray-500"
-          >
-            <span className="material-symbols-outlined">close</span>
-          </button>
-        </div>
-
-        <form onSubmit={onSubmit} className="p-6 space-y-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <Input
-              label="Tên camera"
-              name="camera_name"
-              value={formData.camera_name}
-              onChange={onChange}
-              placeholder="Ví dụ: Cam 01 - Phòng A101"
-              required
-            />
-
-            <Input
-              label="IP camera"
-              name="camera_ip"
-              value={formData.camera_ip}
-              onChange={onChange}
-              placeholder="Ví dụ: 192.168.1.50"
-              required
-            />
-
-            <FormSelect
-              label="Phòng học"
-              name="id_room"
-              value={formData.id_room}
-              onChange={onChange}
-            >
-              <option value="">Chưa gán phòng</option>
-              {rooms.map((room) => (
-                <option key={room.id_room} value={room.id_room}>
-                  {room.room_code} - {room.room_name} - {room.building}
-                </option>
-              ))}
-            </FormSelect>
-
-            <FormSelect
-              label="Trạng thái"
-              name="status"
-              value={formData.status}
-              onChange={onChange}
-            >
-              <option value="ONLINE">Online</option>
-              <option value="OFFLINE">Offline</option>
-            </FormSelect>
-
-            <div className="md:col-span-2">
-              <Input
-                label="Vị trí"
-                name="location"
-                value={formData.location}
-                onChange={onChange}
-                placeholder="Ví dụ: Trước cửa phòng A101"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-3 pt-5 border-t border-gray-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-3 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100"
-            >
-              Hủy
-            </button>
-
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-5 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">
-                save
-              </span>
-              {saving
-                ? "Đang lưu..."
-                : mode === "add"
-                ? "Thêm camera"
-                : "Cập nhật"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function Input({
-  label,
-  name,
-  value = "",
-  onChange,
-  placeholder = "",
-  required = false,
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold text-gray-500 mb-1 block">
-        {label} {required && <span className="text-red-600">*</span>}
-      </label>
-
-      <input
-        name={name}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-600"
-      />
-    </div>
-  );
-}
-
-function FormSelect({
-  label,
-  name,
-  value,
-  onChange,
-  children,
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold text-gray-500 mb-1 block">
-        {label}
-      </label>
-
-      <select
-        name={name}
-        value={value}
-        onChange={onChange}
-        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-600"
-      >
-        {children}
-      </select>
     </div>
   );
 }
