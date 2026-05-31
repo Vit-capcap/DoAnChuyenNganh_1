@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-// import dotenv from "dotenv";
 
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import studentRoutes from "./routes/studentRoutes.js";
@@ -10,11 +9,10 @@ import roomRouters from "./routes/roomRoutes.js";
 import scheduleRoutes from "./routes/scheduleRoutes.js";
 import attendanceRoutes from "./routes/attendanceRoutes.js";
 import subjectRoutes from "./routes/subjectRoutes.js";
-
 import accountRoutes from "./routes/accountRoutes.js";
-
 import settingRoutes from "./routes/settingRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
+import cameraRoutes from "./routes/cameraRoutes.js"
 
 
 const app = express();
@@ -35,6 +33,7 @@ app.use("/api/subjects", subjectRoutes);
 app.use("/api/accounts", accountRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/cameras", cameraRoutes);
 
 
 const PORT = 3060;
