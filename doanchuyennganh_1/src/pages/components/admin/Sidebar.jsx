@@ -9,13 +9,13 @@ export default function Sidebar({ activePage }) {
       path: "/dashboard",
     },
     {
-      icon: "group",
+      icon: "groups",
       label: "Học sinh - sinh viên",
       key: "students",
       path: "/students",
     },
     {
-      icon: "school",
+      icon: "co_present",
       label: "Quản lý giáo viên",
       key: "teachers",
       path: "/teachers",
@@ -39,30 +39,29 @@ export default function Sidebar({ activePage }) {
       path: "/subjects",
     },
     {
-      icon: "menu_book",
+      icon: "fact_check",
       label: "Quản lý điểm danh",
       key: "attendance",
       path: "/attendance",
     },
     {
-      icon: "menu_book",
+      icon: "manage_accounts",
       label: "Quản lý tài khoản",
       key: "accounts",
       path: "/accounts",
     },
     {
-      icon: "menu_book",
+      icon: "bar_chart",
       label: "Biểu đồ thống kê",
       key: "reports",
       path: "/reports",
     },
-        {
-      icon: "menu_book",
+    {
+      icon: "videocam",
       label: "Camera giám sát",
       key: "cameras",
       path: "/cameras",
     },
- 
   ];
 
   return (
@@ -119,20 +118,19 @@ export default function Sidebar({ activePage }) {
       </nav>
 
       <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-
         <button
           type="button"
           className="mb-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-bold text-white/80 transition hover:bg-white/15 hover:text-white"
         >
           <span className="material-symbols-outlined text-[18px]">
-            help
+            support_agent
           </span>
           Help Support
         </button>
 
         <button
           type="button"
-          className="flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold text-red-400 transition bg-red-500/5 hover:bg-red-500/10  hover:text-red-500"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-500/5 px-4 py-3 text-sm font-bold text-red-400 transition hover:bg-red-500/10 hover:text-red-500"
         >
           <span className="material-symbols-outlined text-[18px]">
             logout
