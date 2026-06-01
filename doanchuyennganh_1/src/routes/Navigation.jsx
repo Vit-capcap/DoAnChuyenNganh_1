@@ -14,23 +14,35 @@ import SchedulePage from "../pages/Admin/AdminSchedulePage";
 import SubjectsPage from "../pages/Admin/AdminSubjectsPage";
 import AdminAddStudentPage from "../pages/Admin/AdminAddStudentPage";
 import AdminEditTeacherPage from "../pages/Admin/AdminEditTeacherPage";
-import AdminRoomsPage from "../pages/Admin/AdminRoomsPage";
 import AdminStudentDetailPage from "../pages/Admin/AdminStudentDetailPage";
 import AdminEditStudentPage from "../pages/Admin/AdminEditStudentPage";
 import AdminAttendancePage from "../pages/Admin/AdminAttendancePage";
 import AdminAccountsPage from "../pages/Admin/AdminAccountsPage";
 import AdminSettingsPage from "../pages/Admin/AdminSettingsPage";
-import AdminReportsPage from "../pages/Admin/AdminReportsPage"
+import AdminReportsPage from "../pages/Admin/AdminReportsPage";
 import AdminCameraMonitorPage from "../pages/Admin/AdminCameraMonitorPage";
 
+import TeacherDashboard from "../pages/Teacher/TeacherDashboard";
+import TeacherSchedule from "../pages/Teacher/TeacherSchedule";
+import TeacherClasses from "../pages/Teacher/TeacherClasses";
+import TeacherClassDetail from "../pages/Teacher/TeacherClassDetail";
+import TeacherAttendance from "../pages/Teacher/TeacherAttendance";
+import TeacherSessions from "../pages/Teacher/TeacherSessions";
+import TeacherNotifications from "../pages/Teacher/TeacherNotifications";
+import TeacherProfile from "../pages/Teacher/TeacherProfile";
+import TeacherStatistics from "../pages/Teacher/TeacherStatistics";
+// import TeacherChangePasswordPanel from "./TeacherChangePasswordPanel";
+import LoginPage from "./../pages/LoginPage";
 
 export default function Navigation() {
   return (
     <BrowserRouter>
       <Routes>
-      
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
 
+        <Route path="/login" element={<LoginPage />} />
+
+        {/* Admin Routes */}
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/students" element={<StudentsPage />} />
         <Route path="/addteachers" element={<AdminAddTeacherPage />} />
@@ -38,9 +50,8 @@ export default function Navigation() {
         <Route path="/rooms" element={<RoomsPage />} />
         <Route path="/schedule" element={<SchedulePage />} />
         <Route path="/subjects" element={<SubjectsPage />} />
-        <Route path="/addstudent" element={<AdminAddStudentPage />}/>
+        <Route path="/addstudent" element={<AdminAddStudentPage />} />
         <Route path="/editteacher/:id" element={<AdminEditTeacherPage />} />
-        <Route path="/rooms" element={<AdminRoomsPage />} />
         <Route path="/studentdetail/:id" element={<AdminStudentDetailPage />} />
         <Route path="/editstudent/:id" element={<AdminEditStudentPage />} />
         <Route path="/attendance" element={<AdminAttendancePage />} />
@@ -49,7 +60,30 @@ export default function Navigation() {
         <Route path="/reports" element={<AdminReportsPage />} />
         <Route path="/cameras" element={<AdminCameraMonitorPage />} />
 
-        
+        {/* Teacher Routes */}
+        <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
+        <Route path="/teacher/schedule" element={<TeacherSchedule />} />
+        <Route path="/teacher/classes" element={<TeacherClasses />} />
+        <Route path="/teacher/sessions" element={<TeacherSessions />} />
+        <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} />
+        <Route path="/teacher/attendance" element={<TeacherAttendance />} />
+        <Route path="/teacher/notifications" element={<TeacherNotifications />} /> 
+        <Route path="/teacher/statistics" element={<TeacherStatistics />} />
+        {/* <Route path="/teacher/notifications" element={<TeacherNotifications />} />  */}
+        <Route path="/teacher/profile" element={<TeacherProfile />} />
+        {/* <Route path="/teacher/change-password" element={<TeacherChangePasswordPanel />} /> */}
+{/* <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} /> */}
+
+        {/* <Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} /> */}
+{/* Route chi tiết lớp - giữ route cũ */}
+<Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} />
+
+{/* Route chi tiết lớp - route chuẩn đồng bộ */}
+<Route path="/teacher/classes/:id" element={<TeacherClassDetail />} />
+
+
+
+
       </Routes>
     </BrowserRouter>
   );
