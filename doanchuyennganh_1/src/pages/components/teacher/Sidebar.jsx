@@ -8,61 +8,37 @@ export default function Sidebar({ activePage }) {
       icon: "dashboard",
       label: "Trang chủ",
       key: "dashboard",
-      path: "/dashboard",
-    },
-    {
-      icon: "groups",
-      label: "Học sinh - sinh viên",
-      key: "students",
-      path: "/students",
-    },
-    {
-      icon: "co_present",
-      label: "Quản lý giáo viên",
-      key: "teachers",
-      path: "/teachers",
-    },
-    {
-      icon: "meeting_room",
-      label: "Quản lý phòng học",
-      key: "rooms",
-      path: "/rooms",
+      path: "/teacher/dashboard",
     },
     {
       icon: "calendar_month",
-      label: "Lịch học",
+      label: "Lịch dạy",
       key: "schedule",
-      path: "/schedule",
+      path: "/teacher/schedule",
     },
     {
-      icon: "menu_book",
-      label: "Môn học",
-      key: "subjects",
-      path: "/subjects",
+      icon: "groups",
+      label: "Lớp học",
+      key: "classes",
+      path: "/teacher/classes",
+    },
+    {
+      icon: "event_note",
+      label: "Buổi học",
+      key: "sessions",
+      path: "/teacher/sessions",
     },
     {
       icon: "fact_check",
-      label: "Quản lý điểm danh",
+      label: "Điểm danh",
       key: "attendance",
-      path: "/attendance",
+      path: "/teacher/attendance",
     },
     {
-      icon: "manage_accounts",
-      label: "Quản lý tài khoản",
-      key: "accounts",
-      path: "/accounts",
-    },
-    {
-      icon: "bar_chart",
-      label: "Biểu đồ thống kê",
-      key: "reports",
-      path: "/reports",
-    },
-    {
-      icon: "videocam",
-      label: "Camera giám sát",
-      key: "cameras",
-      path: "/cameras",
+      icon: "leaderboard",
+      label: "Thống kê",
+      key: "statistics",
+      path: "/teacher/statistics",
     },
   ];
 
@@ -71,16 +47,16 @@ export default function Sidebar({ activePage }) {
 
     if (!isConfirm) return;
 
+    // Xóa toàn bộ dữ liệu đăng nhập đang lưu
     localStorage.removeItem("token");
     localStorage.removeItem("account");
     localStorage.removeItem("user");
-    localStorage.removeItem("admin");
     localStorage.removeItem("teacher");
-    localStorage.removeItem("student");
-    localStorage.removeItem("adminId");
     localStorage.removeItem("teacherId");
-    localStorage.removeItem("studentId");
     localStorage.removeItem("role");
+
+    // Nếu bạn muốn xóa sạch toàn bộ localStorage thì dùng dòng này
+    // localStorage.clear();
 
     navigate("/login", { replace: true });
   };
