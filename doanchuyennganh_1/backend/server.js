@@ -13,7 +13,7 @@ import accountRoutes from "./routes/accountRoutes.js";
 import settingRoutes from "./routes/settingRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import cameraRoutes from "./routes/cameraRoutes.js"
-
+import authRoutes from "./routes/authRoutes.js";
 
 const app = express();
 
@@ -34,7 +34,7 @@ app.use("/api/accounts", accountRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/cameras", cameraRoutes);
-
+app.use("/api/auth", authRoutes)
 
 const PORT = 3060;
 
