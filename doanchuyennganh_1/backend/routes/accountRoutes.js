@@ -8,6 +8,86 @@ const validStatuses = ["ACTIVE", "LOCKED"];
 
 /*
 |--------------------------------------------------------------------------
+| API: Đăng nhập
+|--------------------------------------------------------------------------
+| POST /api/accounts/login
+| Body: { username, password }
+| Trả về: { success, user: { id_account, username, role, student_id, teacher_id, status } }
+|--------------------------------------------------------------------------
+*/
+router.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng nhập tên đăng nhập và mật khẩu",
+      });
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        id_account,
+        username,
+        role,
+        student_id,
+        teacher_id,
+        status
+      FROM Account
+      WHERE username = ? AND password = ?
+      LIMIT 1
+      `,
+      [username.trim(), password]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Tên đăng nhập hoặc mật khẩu không đúng",
+      });
+    }
+
+    const user = rows[0];
+
+    if (user.status === "LOCKED") {
+      return res.status(403).json({
+        success: false,
+        message: "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
+      });
+    }
+
+    // Cập nhật last_login
+    await db.query(
+      `UPDATE Account SET last_login = NOW() WHERE id_account = ?`,
+      [user.id_account]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Đăng nhập thành công",
+      user: {
+        id_account: user.id_account,
+        username: user.username,
+        role: user.role,
+        student_id: user.student_id,
+        teacher_id: user.teacher_id,
+        status: user.status,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi đăng nhập:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi đăng nhập",
+      error: error.message,
+    });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
 | API: Lấy dữ liệu option cho form tài khoản
 |--------------------------------------------------------------------------
 | GET /api/accounts/options

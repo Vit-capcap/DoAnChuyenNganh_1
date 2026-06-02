@@ -1,61 +1,36 @@
+// src/pages/Student/PersonalProfilePage.jsx
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import SidebarItem from "../components/SidebarItem";
+import { getMyStudentProfile } from "../../api/studentApi";
 
+const BACKEND_URL = "http://localhost:3060";
+const DEFAULT_AVATAR =
+  "https://lh3.googleusercontent.com/aida-public/AB6AXuAycJ0tEqeG-1uLDOlXlgjI1dU8HkpVebjSbkLUez0eXu8DDxLTNlOyo_8XD0-uo1--Y-xN63S2rEmTS0HOQhWOX9niSdgdaddNuBfFYlkPk1tSW-VQRU4yDZ81GUgDnSzbM9qu--rvEmZM_A0QeG2xJnRXJ1rOWF-awF6gecutUqgPdLf44gwdQMqctU7p5C-yeX0yVDx78tunxeT2A1OA3aYXDL5pKXfSZRKpr7jUGd0zmoPaB7wDMpiMokDZ6-IMALT8mFmfSA";
+
+/** Trả về URL hoàn chỉnh cho ảnh từ backend */
+function resolveImageUrl(path) {
+  if (!path) return DEFAULT_AVATAR;
+  if (path.startsWith("http")) return path;
+  return `${BACKEND_URL}/${path}`;
+}
+
+/* =========================
+   SIDEBAR ITEMS
+========================= */
 const sidebarItems = [
-  { icon: "dashboard", title: "Dashboard" },
-  { icon: "face", title: "Face Registration" },
-  { icon: "calendar_month", title: "Study Schedule" },
-  { icon: "history", title: "Attendance History" },
-  { icon: "leaderboard", title: "Statistics" },
-  { icon: "notifications", title: "Notifications" },
-  { icon: "settings", title: "Settings", active: true },
+  { icon: "dashboard", title: "Dashboard", path: "/student/dashboard" },
+  { icon: "face", title: "Face Registration", path: "/student/dashboard" },
+  { icon: "calendar_month", title: "Study Schedule", path: "/student/schedule" },
+  { icon: "history", title: "Attendance History", path: "/student/attendance" },
+  { icon: "leaderboard", title: "Statistics", path: "/student/statistics" },
+  { icon: "notifications", title: "Notifications", path: "/student/notifications" },
+  { icon: "settings", title: "Settings", active: true, path: "/student/profile" },
 ];
 
-const profileData = {
-  name: "Alexander Bennett",
-  fullName: "Alexander James Bennett",
-  studentId: "CS-2023-8942",
-  major: "Computer Science",
-  classYear: "Class of '25",
-  dob: "October 14, 2002",
-  email: "a.bennett@university.edu",
-  phone: "+1 (555) 019-2837",
-  enrollmentDate: "September 1, 2021",
-  emergencyName: "Sarah Bennett (Mother)",
-  emergencyPhone: "+1 (555) 019-9922",
-  avatar:
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuDiEIDa_Z4PKUiXDad0FvdFkxI4bN3xGGBG89GDYsNYRuTkUCVPHcnEt9PHYVHldVa8-lDZ_ymK1jiLEkhy2vnI7X_WHac0zoHoyj-Gqx8CmMXj2F17RaD0talT2qngimBhepCUri7v9DMFvh5GoruyZZq7RLsGDW1yN1BJAYWD66qHI1HDbdjfWJ1x-5cr_61lhqXerN7e0JvP0B07nYHcEzHFzGqEOAFKuzPWPf153lC77QSX1MRjTWm_Spv6E-klnGl5EnL65A",
-};
-
-const personalInfo = [
-  {
-    label: "Full Legal Name",
-    value: profileData.fullName,
-  },
-  {
-    label: "Date of Birth",
-    value: profileData.dob,
-  },
-  {
-    label: "University Email",
-    value: profileData.email,
-    icon: "mail",
-  },
-  {
-    label: "Phone Number",
-    value: profileData.phone,
-    icon: "smartphone",
-  },
-  {
-    label: "Enrollment Date",
-    value: profileData.enrollmentDate,
-  },
-  {
-    label: "Emergency Contact",
-    value: profileData.emergencyName,
-    subValue: profileData.emergencyPhone,
-  },
-];
-
+/* =========================
+   SUB-COMPONENTS
+========================= */
 function InfoField({ label, value, subValue, icon }) {
   return (
     <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 hover:border-blue-200 transition">
@@ -69,7 +44,7 @@ function InfoField({ label, value, subValue, icon }) {
         )}
 
         <div>
-          <p className="text-gray-800 font-medium">{value}</p>
+          <p className="text-gray-800 font-medium">{value || "—"}</p>
 
           {subValue && (
             <p className="text-sm text-gray-500 mt-1">{subValue}</p>
@@ -108,7 +83,173 @@ function SectionCard({ title, icon, children, action }) {
   );
 }
 
+/* =========================
+   HELPER: format ngày
+========================= */
+function formatDate(dateStr) {
+  if (!dateStr) return "—";
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatGender(gender) {
+  if (!gender) return "—";
+  if (gender === "Male") return "Nam";
+  if (gender === "Female") return "Nữ";
+  return gender;
+}
+
+/* =========================
+   MAIN COMPONENT
+========================= */
 export default function PersonalProfilePage() {
+  const navigate = useNavigate();
+
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [studentId, setStudentId] = useState(null);
+
+  const fetchProfile = useCallback((sid) => {
+    setLoading(true);
+    setError("");
+    getMyStudentProfile(sid)
+      .then((res) => {
+        if (res && res.success) {
+          setProfile(res.data);
+        } else {
+          setError(res?.message || "Không thể tải thông tin cá nhân.");
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setError(err.message || "Lỗi kết nối đến server.");
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const userRaw = localStorage.getItem("user");
+    if (!userRaw) {
+      navigate("/login");
+      return;
+    }
+
+    let user;
+    try {
+      user = JSON.parse(userRaw);
+    } catch {
+      localStorage.removeItem("user");
+      navigate("/login");
+      return;
+    }
+
+    if (user.role !== "STUDENT" || !user.student_id) {
+      setError("Tài khoản không có quyền truy cập trang này.");
+      setLoading(false);
+      return;
+    }
+
+    setStudentId(user.student_id);
+    fetchProfile(user.student_id);
+  }, [navigate, fetchProfile]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("user");
+    navigate("/login");
+  };
+
+  /* ====================== LOADING ====================== */
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f3f6fb] flex items-center justify-center">
+        <div className="text-center">
+          <span className="material-symbols-outlined text-6xl text-blue-600 animate-spin">
+            progress_activity
+          </span>
+          <p className="mt-4 text-gray-500">Đang tải thông tin cá nhân...</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ====================== ERROR ====================== */
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#f3f6fb] flex items-center justify-center">
+        <div className="text-center max-w-sm">
+          <span className="material-symbols-outlined text-6xl text-red-400">
+            error_outline
+          </span>
+          <p className="mt-4 text-red-600 font-semibold">{error}</p>
+          <button
+            onClick={() => navigate("/login")}
+            className="mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition"
+          >
+            Về trang đăng nhập
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ====================== BUILD personalInfo ====================== */
+  const personalInfo = [
+    {
+      label: "Họ và tên đầy đủ",
+      value: profile?.full_name,
+    },
+    {
+      label: "Ngày sinh",
+      value: formatDate(profile?.date_of_birth),
+    },
+    {
+      label: "Giới tính",
+      value: formatGender(profile?.gender),
+    },
+    {
+      label: "Email",
+      value: profile?.email,
+      icon: "mail",
+    },
+    {
+      label: "Số điện thoại",
+      value: profile?.phone,
+      icon: "smartphone",
+    },
+    {
+      label: "Khoa",
+      value: profile?.faculty,
+    },
+    {
+      label: "Lớp",
+      value: profile?.class_name,
+    },
+    {
+      label: "Khóa học",
+      value: profile?.course_year,
+    },
+    {
+      label: "Trạng thái sinh viên",
+      value: profile?.student_status === "ACTIVE" ? "Đang học" : (profile?.student_status || "—"),
+    },
+    {
+      label: "Ngày tạo hồ sơ",
+      value: formatDate(profile?.created_at),
+    },
+  ];
+
+  const hasFace = Boolean(profile?.id_face);
+  const avatarSrc = resolveImageUrl(profile?.avatar);
+
   return (
     <div className="min-h-screen bg-[#f3f6fb] text-gray-800 overflow-x-hidden">
 
@@ -163,29 +304,27 @@ export default function PersonalProfilePage() {
         <div className="flex-1 px-4 py-5 space-y-2 overflow-y-auto">
 
           {sidebarItems.map((item, index) => (
-            <SidebarItem
-              key={index}
-              icon={item.icon}
-              title={item.title}
-              active={item.active}
-            />
+            <div key={index} onClick={() => navigate(item.path)} className="cursor-pointer">
+              <SidebarItem
+                icon={item.icon}
+                title={item.title}
+                active={item.active}
+              />
+            </div>
           ))}
         </div>
 
         {/* FOOTER */}
         <div className="p-4 border-t border-white/10">
 
-          <button className="w-full bg-white/10 hover:bg-white/20 transition rounded-2xl py-3 mb-3">
-            Help Support
-          </button>
-
-          <button className="w-full flex items-center justify-center gap-2 text-red-400 hover:bg-red-500/10 rounded-2xl py-3 transition">
-
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 text-red-400 hover:bg-red-500/10 rounded-2xl py-3 transition"
+          >
             <span className="material-symbols-outlined">
               logout
             </span>
-
-            Logout
+            Đăng xuất
           </button>
         </div>
       </aside>
@@ -209,35 +348,39 @@ export default function PersonalProfilePage() {
         {/* ACTIONS */}
         <div className="flex items-center gap-4">
 
-          {/* SEARCH */}
-          <div className="hidden lg:flex items-center bg-[#f3f6fb] rounded-full px-5 py-2.5 border border-gray-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200 transition">
+          {/* REFRESH */}
+          <button
+            type="button"
+            onClick={() => studentId && fetchProfile(studentId)}
+            className="p-2 rounded-full hover:bg-gray-100 transition"
+            title="Tải lại thông tin"
+            disabled={loading}
+          >
+            <span className={`material-symbols-outlined text-gray-500 ${loading ? "animate-spin" : ""}`}>
+              refresh
+            </span>
+          </button>
 
+          {/* SEARCH – disabled */}
+          <div className="hidden lg:flex items-center bg-[#f3f6fb] rounded-full px-5 py-2.5 border border-gray-200">
             <input
               type="text"
               placeholder="Search..."
-              className="bg-transparent outline-none text-sm w-[220px]"
+              className="bg-transparent outline-none text-sm w-[220px] cursor-not-allowed"
+              disabled
+              title="Chức năng tìm kiếm đang được phát triển"
             />
-
-            <span className="material-symbols-outlined text-gray-500">
-              search
-            </span>
+            <span className="material-symbols-outlined text-gray-500">search</span>
           </div>
 
-          {/* NOTIFICATION */}
-          <button className="relative w-11 h-11 rounded-2xl bg-[#f3f6fb] hover:bg-gray-200 transition flex items-center justify-center">
-
-            <span className="material-symbols-outlined text-gray-700">
-              notifications
-            </span>
-
-            <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full"></span>
-          </button>
-
-          {/* AVATAR */}
+          {/* AVATAR – click → chính trang này */}
           <img
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuAycJ0tEqeG-1uLDOlXlgjI1dU8HkpVebjSbkLUez0eXu8DDxLTNlOyo_8XD0-uo1--Y-xN63S2rEmTS0HOQhWOX9niSdgdaddNuBfFYlkPk1tSW-VQRU4yDZ81GUgDnSzbM9qu--rvEmZM_A0QeG2xJnRXJ1rOWF-awF6gecutUqgPdLf44gwdQMqctU7p5C-yeX0yVDx78tunxeT2A1OA3aYXDL5pKXfSZRKpr7jUGd0zmoPaB7wDMpiMokDZ6-IMALT8mFmfSA"
+            src={avatarSrc}
             alt="avatar"
-            className="w-11 h-11 rounded-2xl border-2 border-white shadow-sm object-cover"
+            className="w-11 h-11 rounded-2xl border-2 border-white shadow-sm object-cover cursor-pointer hover:ring-2 hover:ring-blue-400 transition"
+            onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
+            onClick={() => navigate("/student/profile")}
+            title="Thông tin cá nhân"
           />
         </div>
       </header>
@@ -254,22 +397,13 @@ export default function PersonalProfilePage() {
 
             <div>
               <h1 className="text-4xl font-extrabold text-gray-800 mb-2">
-                Personal Profile
+                Thông tin cá nhân
               </h1>
 
               <p className="text-gray-500">
-                Manage your biometric identity and academic records.
+                Quản lý hồ sơ nhận diện sinh trắc học và hồ sơ học tập.
               </p>
             </div>
-
-            <button className="bg-blue-700 hover:bg-blue-800 text-white px-6 py-3 rounded-2xl font-medium shadow-lg shadow-blue-200 transition flex items-center gap-2">
-
-              <span className="material-symbols-outlined text-[20px]">
-                edit
-              </span>
-
-              Edit Profile
-            </button>
           </div>
 
           {/* CONTENT */}
@@ -290,46 +424,49 @@ export default function PersonalProfilePage() {
 
                   {/* AVATAR */}
                   <div className="relative mb-5">
-
                     <div className="w-[130px] h-[130px] rounded-full overflow-hidden border-[6px] border-white shadow-xl bg-white">
-
                       <img
-                        src={profileData.avatar}
+                        src={avatarSrc}
                         alt="profile"
                         className="w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
                       />
                     </div>
-
-                    <button className="absolute bottom-1 right-1 w-10 h-10 rounded-full bg-blue-700 hover:bg-blue-800 text-white flex items-center justify-center shadow-lg transition">
-
-                      <span className="material-symbols-outlined text-[18px]">
-                        photo_camera
-                      </span>
-                    </button>
                   </div>
 
                   {/* INFO */}
                   <h2 className="text-2xl font-bold text-gray-800">
-                    {profileData.name}
+                    {profile?.full_name || "—"}
                   </h2>
 
                   <p className="text-blue-700 tracking-widest text-sm font-semibold mt-1 mb-5">
-                    ID: {profileData.studentId}
+                    Mã SV: {profile?.student_code || "—"}
                   </p>
 
                   {/* TAGS */}
                   <div className="flex flex-wrap justify-center gap-3 mb-6">
 
                     <span className="bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full text-sm font-medium">
-                      {profileData.major}
+                      {profile?.faculty || "—"}
                     </span>
 
                     <span className="bg-gray-100 text-gray-600 px-4 py-1.5 rounded-full text-sm font-medium">
-                      {profileData.classYear}
+                      {profile?.class_name || "—"}
                     </span>
                   </div>
 
-                  {/* STATUS */}
+                  {/* USERNAME */}
+                  <div className="w-full bg-[#f8fafc] border border-gray-200 rounded-2xl p-3 mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-gray-500 text-[20px]">
+                        person
+                      </span>
+                      <span className="text-sm text-gray-600">Tài khoản</span>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-800">{profile?.username || "—"}</span>
+                  </div>
+
+                  {/* FACE ID STATUS */}
                   <div className="w-full bg-[#f8fafc] border border-gray-200 rounded-2xl p-4 flex items-center justify-between">
 
                     <div className="flex items-center gap-2">
@@ -343,14 +480,21 @@ export default function PersonalProfilePage() {
                       </span>
                     </div>
 
-                    <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1">
-
-                      <span className="material-symbols-outlined text-[16px]">
-                        check_circle
+                    {hasFace ? (
+                      <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[16px]">
+                          check_circle
+                        </span>
+                        Đã đăng ký
                       </span>
-
-                      Active
-                    </span>
+                    ) : (
+                      <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[16px]">
+                          warning
+                        </span>
+                        Chưa đăng ký
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -361,7 +505,7 @@ export default function PersonalProfilePage() {
 
               {/* PERSONAL INFO */}
               <SectionCard
-                title="Personal Information"
+                title="Thông tin cá nhân"
                 icon="badge"
               >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -378,26 +522,23 @@ export default function PersonalProfilePage() {
                 </div>
               </SectionCard>
 
-              {/* SECURITY */}
+              {/* ACCOUNT SECURITY */}
               <SectionCard
-                title="Account Security"
+                title="Bảo mật tài khoản"
                 icon="security"
-                action={
-                  <button className="border border-gray-300 hover:border-blue-500 hover:text-blue-700 px-5 py-2 rounded-xl transition font-medium">
-                    Update Security
-                  </button>
-                }
               >
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
 
                   <div>
                     <p className="text-lg font-semibold text-gray-800 mb-1">
-                      Password & Authentication
+                      Mật khẩu & Xác thực
                     </p>
 
                     <p className="text-gray-500">
-                      Last changed 45 days ago. Two-factor authentication is
-                      currently enabled.
+                      Trạng thái tài khoản:{" "}
+                      <span className={profile?.account_status === "ACTIVE" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>
+                        {profile?.account_status === "ACTIVE" ? "Hoạt động" : (profile?.account_status || "—")}
+                      </span>
                     </p>
                   </div>
 
