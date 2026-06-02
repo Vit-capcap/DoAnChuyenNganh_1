@@ -1,5 +1,7 @@
+# =========================
 # Logs
-logs
+# =========================
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,18 +9,86 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# =========================
+# Node / React / Vite
+# =========================
+node_modules/
+dist/
+dist-ssr/
+build/
 *.local
 
+# =========================
+# Python virtual environment
+# =========================
+venv/
+.venv/
+env/
+ENV/
+
+# Face recognition virtual environment
+face-recognition/.venv/
+face-recognition/venv/
+doanchuyennganh_1/face-recognition/.venv/
+doanchuyennganh_1/face-recognition/venv/
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+
+# =========================
+# Large AI / model / binary files
+# =========================
+*.dll
+*.pyd
+*.pt
+*.pth
+*.h5
+*.onnx
+*.pb
+*.tflite
+*.keras
+*.weights
+*.bin
+
+# =========================
+# Dataset / training outputs
+# =========================
+data/
+raw/
+dataset/
+datasets/
+models/
+weights/
+runs/
+checkpoints/
+exports/
+outputs/
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
 # Editor directories and files
+# =========================
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db

@@ -44,4 +44,3 @@ npm run dev
 git checkout main
 git fetch --all --prune
 git pull origin main
-```
