@@ -1,7 +1,5 @@
 # DoAnChuyenNganh_1
 
-HOÀNG KHOAN GHÉP BRANCH bao_diemdanh VÀO NGHEN, KHOAN GHÉP KHOAN KHÉP
-
 
 <br> <br> <br>
 
