@@ -19,6 +19,7 @@ import subjectRoutes from "./routes/subjectRoutes.js";
 
 import accountRoutes from "./routes/accountRoutes.js";
 import studentSelfRoutes from "./routes/studentSelfRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 
 import settingRoutes from "./routes/settingRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
@@ -46,6 +47,7 @@ app.use("/api/admin", dashboardRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/accounts", accountRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/student", studentSelfRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/reports", reportRoutes);
