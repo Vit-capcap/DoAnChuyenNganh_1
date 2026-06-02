@@ -1,13 +1,8 @@
-// src/routes/Navigation.jsx
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 // ========================= LOGIN =========================
 import Login from "../pages/Login";
+import LoginPage from "./../pages/LoginPage";
 
 // ========================= ADMIN =========================
 import DashboardPage from "../pages/Admin/AdminDashboard";
@@ -28,6 +23,18 @@ import AdminSettingsPage from "../pages/Admin/AdminSettingsPage";
 import AdminReportsPage from "../pages/Admin/AdminReportsPage";
 import AdminCameraMonitorPage from "../pages/Admin/AdminCameraMonitorPage";
 
+// ========================= TEACHER =========================
+import TeacherDashboard from "../pages/Teacher/TeacherDashboard";
+import TeacherSchedule from "../pages/Teacher/TeacherSchedule";
+import TeacherClasses from "../pages/Teacher/TeacherClasses";
+import TeacherClassDetail from "../pages/Teacher/TeacherClassDetail";
+import TeacherAttendance from "../pages/Teacher/TeacherAttendance";
+import TeacherSessions from "../pages/Teacher/TeacherSessions";
+import TeacherNotifications from "../pages/Teacher/TeacherNotifications";
+import TeacherProfile from "../pages/Teacher/TeacherProfile";
+import TeacherStatistics from "../pages/Teacher/TeacherStatistics";
+// import TeacherChangePasswordPanel from "./TeacherChangePasswordPanel";
+
 // ========================= STUDENT =========================
 import StudentDashboard from "../pages/Student/Dashboard";
 import StudentPersonalProfile from "../pages/Student/PersonalProfilePage";
@@ -36,6 +43,10 @@ import StudentAttendanceHistory from "../pages/Student/AttendanceHistoryPage";
 import StudentStatistics from "../pages/Student/Statistics";
 import StudentNotifications from "../pages/Student/NotificationsPage";
 import StudentSettings from "../pages/Student/SettingCard";
+
+// ========================= OTHER =========================
+import CameraRoomPage from "../pages/CameraRoomPage";
+
 
 /* =========================
    ProtectedRoute: kiểm tra đăng nhập và phân quyền
@@ -88,6 +99,7 @@ function RootRedirect() {
   return <Navigate to="/dashboard" replace />;
 }
 
+
 export default function Navigation() {
   return (
     <BrowserRouter>
@@ -96,8 +108,14 @@ export default function Navigation() {
         {/* ROOT */}
         <Route path="/" element={<RootRedirect />} />
 
+        {/* Auth */}
+        {/* <Route path="/login" element={<LoginPage />} /> */}
+
         {/* LOGIN */}
         <Route path="/login" element={<Login />} />
+
+        {/* Camera nhận diện độc lập */}
+        <Route path="/camera-room" element={<CameraRoomPage />} />
 
         {/* =================== ADMIN ROUTES =================== */}
         <Route path="/dashboard" element={
@@ -180,6 +198,25 @@ export default function Navigation() {
             <AdminCameraMonitorPage />
           </ProtectedRoute>
         } />
+
+        {/* =================== TEACHER ROUTES =================== */}
+        <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
+        <Route path="/teacher/schedule" element={<TeacherSchedule />} />
+        <Route path="/teacher/classes" element={<TeacherClasses />} />
+        <Route path="/teacher/sessions" element={<TeacherSessions />} />
+        <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} />
+        <Route path="/teacher/attendance" element={<TeacherAttendance />} />
+        <Route path="/teacher/notifications" element={<TeacherNotifications />} /> 
+        <Route path="/teacher/statistics" element={<TeacherStatistics />} />
+        {/* <Route path="/teacher/notifications" element={<TeacherNotifications />} />  */}
+        <Route path="/teacher/profile" element={<TeacherProfile />} />
+        {/* <Route path="/teacher/change-password" element={<TeacherChangePasswordPanel />} /> */}
+        {/* <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} /> */}
+        {/* <Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} /> */}
+        {/* Route chi tiết lớp - giữ route cũ */}
+        <Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} />
+        {/* Route chi tiết lớp - route chuẩn đồng bộ */}
+        <Route path="/teacher/classes/:id" element={<TeacherClassDetail />} />
 
         {/* =================== STUDENT ROUTES =================== */}
         <Route path="/student/dashboard" element={

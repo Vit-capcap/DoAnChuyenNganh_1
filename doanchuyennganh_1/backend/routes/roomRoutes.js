@@ -3,21 +3,141 @@ import db from "../config/db.js";
 
 const router = express.Router();
 
+const VALID_ROOM_STATUS = ["ACTIVE", "MAINTENANCE"];
+const VALID_CAMERA_STATUS = ["ONLINE", "OFFLINE"];
+
+function normalizeValue(value) {
+  if (value === undefined || value === null) return null;
+
+  const text = String(value).trim();
+  return text === "" ? null : text;
+}
+
+function validateRoomPayload(body) {
+  const room_code = normalizeValue(body.room_code);
+  const room_name = normalizeValue(body.room_name);
+  const building = normalizeValue(body.building);
+  const floor = normalizeValue(body.floor);
+  const camera_ip = normalizeValue(body.camera_ip);
+
+  const room_status = body.room_status || "ACTIVE";
+  const camera_status = body.camera_status || "ONLINE";
+
+  const camera_name = normalizeValue(body.camera_name);
+  const camera_location = normalizeValue(body.camera_location);
+
+  const capacityNumber = Number(body.capacity);
+
+  if (!room_code || !room_name || !building || !body.capacity) {
+    return {
+      valid: false,
+      message: "Vui lòng nhập mã phòng, tên phòng, tòa nhà và sức chứa",
+    };
+  }
+
+  if (!Number.isInteger(capacityNumber) || capacityNumber <= 0) {
+    return {
+      valid: false,
+      message: "Sức chứa phòng học phải là số nguyên lớn hơn 0",
+    };
+  }
+
+  if (!VALID_ROOM_STATUS.includes(room_status)) {
+    return {
+      valid: false,
+      message: "Trạng thái phòng không hợp lệ",
+    };
+  }
+
+  if (!VALID_CAMERA_STATUS.includes(camera_status)) {
+    return {
+      valid: false,
+      message: "Trạng thái camera không hợp lệ",
+    };
+  }
+
+  return {
+    valid: true,
+    data: {
+      room_code,
+      room_name,
+      building,
+      floor,
+      capacity: capacityNumber,
+      camera_ip,
+      room_status,
+      camera_name,
+      camera_location,
+      camera_status,
+    },
+  };
+}
+
 /*
 |--------------------------------------------------------------------------
-| API: Lấy danh sách phòng học
-|--------------------------------------------------------------------------
 | GET /api/rooms
+| Lấy danh sách phòng học
 |--------------------------------------------------------------------------
 */
 router.get("/", async (req, res) => {
   try {
-    const search = req.query.search || "";
-    const building = req.query.building || "";
-    const room_status = req.query.room_status || "";
-    const camera_status = req.query.camera_status || "";
+    const {
+      search = "",
+      building = "",
+      room_status = "",
+      camera_status = "",
+    } = req.query;
 
-    let sql = `
+    const conditions = [];
+    const params = [];
+
+    if (search.trim()) {
+      conditions.push(`
+        (
+          r.room_code LIKE ?
+          OR r.room_name LIKE ?
+          OR r.building LIKE ?
+          OR r.floor LIKE ?
+          OR r.camera_ip LIKE ?
+          OR c.camera_name LIKE ?
+          OR c.camera_ip LIKE ?
+          OR c.location LIKE ?
+        )
+      `);
+
+      const keyword = `%${search.trim()}%`;
+      params.push(
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword
+      );
+    }
+
+    if (building) {
+      conditions.push("r.building = ?");
+      params.push(building);
+    }
+
+    if (room_status) {
+      conditions.push("r.status = ?");
+      params.push(room_status);
+    }
+
+    if (camera_status) {
+      conditions.push("c.status = ?");
+      params.push(camera_status);
+    }
+
+    const whereSql =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rooms] = await db.query(
+      `
       SELECT
         r.id_room,
         r.room_code,
@@ -34,52 +154,17 @@ router.get("/", async (req, res) => {
         c.location AS camera_location,
         c.status AS camera_status
 
-      FROM ClassRoom r
-      LEFT JOIN CameraDevice c
+      FROM classroom r
+
+      LEFT JOIN cameradevice c
         ON c.id_room = r.id_room
 
-      WHERE
-        (
-          r.room_code LIKE ?
-          OR r.room_name LIKE ?
-          OR r.building LIKE ?
-          OR r.floor LIKE ?
-          OR r.camera_ip LIKE ?
-          OR c.camera_name LIKE ?
-          OR c.camera_ip LIKE ?
-          OR c.location LIKE ?
-        )
-    `;
+      ${whereSql}
 
-    const params = [
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-      `%${search}%`,
-    ];
-
-    if (building) {
-      sql += ` AND r.building = ?`;
-      params.push(building);
-    }
-
-    if (room_status) {
-      sql += ` AND r.status = ?`;
-      params.push(room_status);
-    }
-
-    if (camera_status) {
-      sql += ` AND c.status = ?`;
-      params.push(camera_status);
-    }
-
-    sql += ` ORDER BY r.id_room DESC`;
-
-    const [rooms] = await db.query(sql, params);
+      ORDER BY r.id_room DESC
+      `,
+      params
+    );
 
     res.status(200).json(rooms);
   } catch (error) {
@@ -95,12 +180,19 @@ router.get("/", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| API: Thêm phòng học
-|--------------------------------------------------------------------------
 | POST /api/rooms
+| Thêm phòng học
 |--------------------------------------------------------------------------
 */
 router.post("/", async (req, res) => {
+  const validation = validateRoomPayload(req.body);
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      message: validation.message,
+    });
+  }
+
   const {
     room_code,
     room_name,
@@ -112,28 +204,7 @@ router.post("/", async (req, res) => {
     camera_name,
     camera_location,
     camera_status,
-  } = req.body;
-
-  if (!room_code || !room_name || !building || !capacity) {
-    return res.status(400).json({
-      message: "Vui lòng nhập mã phòng, tên phòng, tòa nhà và sức chứa",
-    });
-  }
-
-  const validRoomStatus = ["ACTIVE", "MAINTENANCE"];
-  const validCameraStatus = ["ONLINE", "OFFLINE"];
-
-  if (room_status && !validRoomStatus.includes(room_status)) {
-    return res.status(400).json({
-      message: "Trạng thái phòng không hợp lệ",
-    });
-  }
-
-  if (camera_status && !validCameraStatus.includes(camera_status)) {
-    return res.status(400).json({
-      message: "Trạng thái camera không hợp lệ",
-    });
-  }
+  } = validation.data;
 
   const connection = await db.getConnection();
 
@@ -143,11 +214,11 @@ router.post("/", async (req, res) => {
     const [existingRooms] = await connection.query(
       `
       SELECT id_room
-      FROM ClassRoom
+      FROM classroom
       WHERE room_code = ?
       LIMIT 1
       `,
-      [room_code.trim()]
+      [room_code]
     );
 
     if (existingRooms.length > 0) {
@@ -160,7 +231,7 @@ router.post("/", async (req, res) => {
 
     const [roomResult] = await connection.query(
       `
-      INSERT INTO ClassRoom (
+      INSERT INTO classroom (
         room_code,
         room_name,
         building,
@@ -172,13 +243,13 @@ router.post("/", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
       [
-        room_code.trim(),
-        room_name.trim(),
-        building.trim(),
-        floor || null,
-        Number(capacity),
-        camera_ip || null,
-        room_status || "ACTIVE",
+        room_code,
+        room_name,
+        building,
+        floor,
+        capacity,
+        camera_ip,
+        room_status,
       ]
     );
 
@@ -187,7 +258,7 @@ router.post("/", async (req, res) => {
     if (camera_name || camera_ip || camera_location) {
       await connection.query(
         `
-        INSERT INTO CameraDevice (
+        INSERT INTO cameradevice (
           camera_name,
           camera_ip,
           location,
@@ -198,10 +269,10 @@ router.post("/", async (req, res) => {
         `,
         [
           camera_name || `Camera ${room_code}`,
-          camera_ip || null,
+          camera_ip,
           camera_location || `${building} - ${room_name}`,
           roomId,
-          camera_status || "ONLINE",
+          camera_status,
         ]
       );
     }
@@ -237,9 +308,8 @@ router.post("/", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| API: Lấy chi tiết 1 phòng học
-|--------------------------------------------------------------------------
 | GET /api/rooms/:id
+| Lấy chi tiết 1 phòng học
 |--------------------------------------------------------------------------
 */
 router.get("/:id", async (req, res) => {
@@ -264,8 +334,9 @@ router.get("/:id", async (req, res) => {
         c.location AS camera_location,
         c.status AS camera_status
 
-      FROM ClassRoom r
-      LEFT JOIN CameraDevice c
+      FROM classroom r
+
+      LEFT JOIN cameradevice c
         ON c.id_room = r.id_room
 
       WHERE r.id_room = ?
@@ -293,13 +364,20 @@ router.get("/:id", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| API: Cập nhật phòng học
-|--------------------------------------------------------------------------
 | PUT /api/rooms/:id
+| Cập nhật phòng học
 |--------------------------------------------------------------------------
 */
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
+
+  const validation = validateRoomPayload(req.body);
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      message: validation.message,
+    });
+  }
 
   const {
     room_code,
@@ -312,28 +390,7 @@ router.put("/:id", async (req, res) => {
     camera_name,
     camera_location,
     camera_status,
-  } = req.body;
-
-  if (!room_code || !room_name || !building || !capacity) {
-    return res.status(400).json({
-      message: "Vui lòng nhập mã phòng, tên phòng, tòa nhà và sức chứa",
-    });
-  }
-
-  const validRoomStatus = ["ACTIVE", "MAINTENANCE"];
-  const validCameraStatus = ["ONLINE", "OFFLINE"];
-
-  if (room_status && !validRoomStatus.includes(room_status)) {
-    return res.status(400).json({
-      message: "Trạng thái phòng không hợp lệ",
-    });
-  }
-
-  if (camera_status && !validCameraStatus.includes(camera_status)) {
-    return res.status(400).json({
-      message: "Trạng thái camera không hợp lệ",
-    });
-  }
+  } = validation.data;
 
   const connection = await db.getConnection();
 
@@ -343,7 +400,7 @@ router.put("/:id", async (req, res) => {
     const [rooms] = await connection.query(
       `
       SELECT id_room
-      FROM ClassRoom
+      FROM classroom
       WHERE id_room = ?
       LIMIT 1
       `,
@@ -361,12 +418,12 @@ router.put("/:id", async (req, res) => {
     const [duplicates] = await connection.query(
       `
       SELECT id_room
-      FROM ClassRoom
+      FROM classroom
       WHERE room_code = ?
-      AND id_room <> ?
+        AND id_room <> ?
       LIMIT 1
       `,
-      [room_code.trim(), id]
+      [room_code, id]
     );
 
     if (duplicates.length > 0) {
@@ -379,7 +436,7 @@ router.put("/:id", async (req, res) => {
 
     await connection.query(
       `
-      UPDATE ClassRoom
+      UPDATE classroom
       SET
         room_code = ?,
         room_name = ?,
@@ -391,13 +448,13 @@ router.put("/:id", async (req, res) => {
       WHERE id_room = ?
       `,
       [
-        room_code.trim(),
-        room_name.trim(),
-        building.trim(),
-        floor || null,
-        Number(capacity),
-        camera_ip || null,
-        room_status || "ACTIVE",
+        room_code,
+        room_name,
+        building,
+        floor,
+        capacity,
+        camera_ip,
+        room_status,
         id,
       ]
     );
@@ -405,7 +462,7 @@ router.put("/:id", async (req, res) => {
     const [cameras] = await connection.query(
       `
       SELECT id_camera
-      FROM CameraDevice
+      FROM cameradevice
       WHERE id_room = ?
       LIMIT 1
       `,
@@ -415,7 +472,7 @@ router.put("/:id", async (req, res) => {
     if (cameras.length > 0) {
       await connection.query(
         `
-        UPDATE CameraDevice
+        UPDATE cameradevice
         SET
           camera_name = ?,
           camera_ip = ?,
@@ -425,16 +482,16 @@ router.put("/:id", async (req, res) => {
         `,
         [
           camera_name || `Camera ${room_code}`,
-          camera_ip || null,
+          camera_ip,
           camera_location || `${building} - ${room_name}`,
-          camera_status || "ONLINE",
+          camera_status,
           id,
         ]
       );
     } else if (camera_name || camera_ip || camera_location) {
       await connection.query(
         `
-        INSERT INTO CameraDevice (
+        INSERT INTO cameradevice (
           camera_name,
           camera_ip,
           location,
@@ -445,10 +502,10 @@ router.put("/:id", async (req, res) => {
         `,
         [
           camera_name || `Camera ${room_code}`,
-          camera_ip || null,
+          camera_ip,
           camera_location || `${building} - ${room_name}`,
           id,
-          camera_status || "ONLINE",
+          camera_status,
         ]
       );
     }
@@ -475,9 +532,8 @@ router.put("/:id", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| API: Xóa phòng học
-|--------------------------------------------------------------------------
 | DELETE /api/rooms/:id
+| Xóa phòng học
 |--------------------------------------------------------------------------
 */
 router.delete("/:id", async (req, res) => {
@@ -491,7 +547,7 @@ router.delete("/:id", async (req, res) => {
     const [rooms] = await connection.query(
       `
       SELECT id_room
-      FROM ClassRoom
+      FROM classroom
       WHERE id_room = ?
       LIMIT 1
       `,
@@ -506,9 +562,56 @@ router.delete("/:id", async (req, res) => {
       });
     }
 
+    const [scheduleRows] = await connection.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM schedule
+      WHERE id_room = ?
+      `,
+      [id]
+    );
+
+    if (Number(scheduleRows[0]?.total || 0) > 0) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        message:
+          "Không thể xóa phòng học vì phòng này đang được sử dụng trong lịch học. Bạn nên chuyển trạng thái phòng sang MAINTENANCE.",
+      });
+    }
+
+    const [cameraRows] = await connection.query(
+      `
+      SELECT id_camera
+      FROM cameradevice
+      WHERE id_room = ?
+      `,
+      [id]
+    );
+
+    for (const camera of cameraRows) {
+      const [historyRows] = await connection.query(
+        `
+        SELECT COUNT(*) AS total
+        FROM recognitionhistory
+        WHERE camera_id = ?
+        `,
+        [camera.id_camera]
+      );
+
+      if (Number(historyRows[0]?.total || 0) > 0) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          message:
+            "Không thể xóa phòng học vì camera của phòng đã có lịch sử nhận diện. Bạn nên chuyển phòng sang MAINTENANCE hoặc camera sang OFFLINE.",
+        });
+      }
+    }
+
     await connection.query(
       `
-      DELETE FROM CameraDevice
+      DELETE FROM cameradevice
       WHERE id_room = ?
       `,
       [id]
@@ -516,7 +619,7 @@ router.delete("/:id", async (req, res) => {
 
     await connection.query(
       `
-      DELETE FROM ClassRoom
+      DELETE FROM classroom
       WHERE id_room = ?
       `,
       [id]
