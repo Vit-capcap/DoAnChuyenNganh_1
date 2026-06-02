@@ -109,10 +109,10 @@ export default function Navigation() {
         <Route path="/" element={<RootRedirect />} />
 
         {/* Auth */}
-        {/* <Route path="/login" element={<LoginPage />} /> */}
+        <Route path="/login" element={<LoginPage />} />
 
         {/* LOGIN */}
-        <Route path="/login" element={<Login />} />
+        {/* <Route path="/login" element={<Login />} /> */}
 
         {/* Camera nhận diện độc lập */}
         <Route path="/camera-room" element={<CameraRoomPage />} />
