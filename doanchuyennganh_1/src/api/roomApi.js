@@ -4,6 +4,7 @@ async function handleResponse(res, defaultMessage) {
   const text = await res.text();
 
   let data;
+
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -18,6 +19,12 @@ async function handleResponse(res, defaultMessage) {
 
   return data;
 }
+
+/*
+|--------------------------------------------------------------------------
+| API quản lý phòng học
+|--------------------------------------------------------------------------
+*/
 
 export async function getRooms(filters = {}) {
   const params = new URLSearchParams();
@@ -38,7 +45,10 @@ export async function getRooms(filters = {}) {
     params.append("camera_status", filters.camera_status);
   }
 
-  const res = await fetch(`${API_URL}/rooms?${params.toString()}`);
+  const queryString = params.toString();
+  const url = queryString ? `${API_URL}/rooms?${queryString}` : `${API_URL}/rooms`;
+
+  const res = await fetch(url);
 
   return handleResponse(res, "Không thể tải danh sách phòng học");
 }
@@ -73,4 +83,36 @@ export async function deleteRoom(idRoom) {
   });
 
   return handleResponse(res, "Xóa phòng học thất bại");
+}
+
+/*
+|--------------------------------------------------------------------------
+| API dùng cho trang camera phòng học
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Kiểm tra phòng có tồn tại không
+ * Backend cần có:
+ * GET /api/camera/room/check?roomName=A101
+ */
+export async function checkCameraRoom(roomName) {
+  const res = await fetch(
+    `${API_URL}/camera/room/check?roomName=${encodeURIComponent(roomName)}`
+  );
+
+  return handleResponse(res, "Không thể kiểm tra thông tin phòng");
+}
+
+/**
+ * Kiểm tra phòng hôm nay có lịch học không
+ * Backend cần có:
+ * GET /api/camera/room/today-session?id_room=1
+ */
+export async function getTodayRoomSession(idRoom) {
+  const res = await fetch(
+    `${API_URL}/camera/room/today-session?id_room=${encodeURIComponent(idRoom)}`
+  );
+
+  return handleResponse(res, "Không thể kiểm tra lịch học hôm nay của phòng");
 }
