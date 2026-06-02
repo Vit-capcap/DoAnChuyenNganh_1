@@ -9,7 +9,7 @@ async function handleResponse(res, defaultMessage) {
     data = text ? JSON.parse(text) : null;
   } catch {
     throw new Error(
-      "Backend không trả về JSON. Có thể sai API /api/cameras hoặc server đang trả HTML."
+      "Backend không trả về JSON. Có thể sai API hoặc server đang trả HTML."
     );
   }
 
@@ -25,6 +25,12 @@ export function normalizeList(data, key) {
   if (Array.isArray(data?.[key])) return data[key];
   return [];
 }
+
+/*
+|--------------------------------------------------------------------------
+| API quản lý camera
+|--------------------------------------------------------------------------
+*/
 
 export async function getCameraOptions() {
   const res = await fetch(`${API_URL}/cameras/options`);
@@ -95,4 +101,51 @@ export async function deleteCameraById(idCamera) {
   });
 
   return handleResponse(res, "Xóa camera thất bại");
+}
+
+/*
+|--------------------------------------------------------------------------
+| API cho trang CameraRoomPage
+|--------------------------------------------------------------------------
+| Dùng cho màn hình nhập phòng -> kiểm tra lịch học -> bật camera
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Kiểm tra phòng có tồn tại không.
+ * Backend cần có:
+ * GET /api/camera/room/check?roomName=A101
+ */
+export async function checkCameraRoom(roomName) {
+  const res = await fetch(
+    `${API_URL}/camera/room/check?roomName=${encodeURIComponent(roomName)}`
+  );
+
+  return handleResponse(res, "Không thể kiểm tra thông tin phòng");
+}
+
+/**
+ * Kiểm tra hôm nay phòng đó có lịch học không.
+ * Backend cần có:
+ * GET /api/camera/room/today-session?id_room=1
+ */
+export async function getTodayRoomSession(idRoom) {
+  const res = await fetch(
+    `${API_URL}/camera/room/today-session?id_room=${encodeURIComponent(idRoom)}`
+  );
+
+  return handleResponse(res, "Không thể kiểm tra lịch học hôm nay của phòng");
+}
+
+/**
+ * Kiểm tra camera của phòng.
+ * Backend nên có:
+ * GET /api/camera/room/device?id_room=1
+ */
+export async function getRoomCameraDevice(idRoom) {
+  const res = await fetch(
+    `${API_URL}/camera/room/device?id_room=${encodeURIComponent(idRoom)}`
+  );
+
+  return handleResponse(res, "Không thể kiểm tra thiết bị camera của phòng");
 }

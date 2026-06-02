@@ -31,8 +31,9 @@ import TeacherSessions from "../pages/Teacher/TeacherSessions";
 import TeacherNotifications from "../pages/Teacher/TeacherNotifications";
 import TeacherProfile from "../pages/Teacher/TeacherProfile";
 import TeacherStatistics from "../pages/Teacher/TeacherStatistics";
-// import TeacherChangePasswordPanel from "./TeacherChangePasswordPanel";
-import LoginPage from "./../pages/LoginPage";
+
+import LoginPage from "../pages/LoginPage";
+import CameraRoomPage from "../pages/CameraRoomPage";
 
 export default function Navigation() {
   return (
@@ -41,6 +42,9 @@ export default function Navigation() {
         <Route path="/" element={<Navigate to="/login" replace />} />
 
         <Route path="/login" element={<LoginPage />} />
+
+        {/* Camera nhận diện độc lập */}
+        <Route path="/camera-room" element={<CameraRoomPage />} />
 
         {/* Admin Routes */}
         <Route path="/dashboard" element={<DashboardPage />} />
@@ -64,26 +68,17 @@ export default function Navigation() {
         <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
         <Route path="/teacher/schedule" element={<TeacherSchedule />} />
         <Route path="/teacher/classes" element={<TeacherClasses />} />
+        <Route path="/teacher/classes/:id" element={<TeacherClassDetail />} />
+        <Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} />
         <Route path="/teacher/sessions" element={<TeacherSessions />} />
-        <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} />
         <Route path="/teacher/attendance" element={<TeacherAttendance />} />
-        <Route path="/teacher/notifications" element={<TeacherNotifications />} /> 
+        <Route
+          path="/teacher/attendance/:sessionId"
+          element={<TeacherAttendance />}
+        />
+        <Route path="/teacher/notifications" element={<TeacherNotifications />} />
         <Route path="/teacher/statistics" element={<TeacherStatistics />} />
-        {/* <Route path="/teacher/notifications" element={<TeacherNotifications />} />  */}
         <Route path="/teacher/profile" element={<TeacherProfile />} />
-        {/* <Route path="/teacher/change-password" element={<TeacherChangePasswordPanel />} /> */}
-{/* <Route path="/teacher/attendance/:sessionId" element={<TeacherAttendance />} /> */}
-
-        {/* <Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} /> */}
-{/* Route chi tiết lớp - giữ route cũ */}
-<Route path="/teacher/classdetail/:id" element={<TeacherClassDetail />} />
-
-{/* Route chi tiết lớp - route chuẩn đồng bộ */}
-<Route path="/teacher/classes/:id" element={<TeacherClassDetail />} />
-
-
-
-
       </Routes>
     </BrowserRouter>
   );
