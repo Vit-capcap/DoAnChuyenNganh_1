@@ -89,6 +89,8 @@ function saveLoginData(user, remember) {
     student_id: studentId,
   };
 
+  // Keep legacy key for routes/components that still read "user".
+  localStorage.setItem("user", JSON.stringify(user));
   localStorage.setItem("account", JSON.stringify(accountData));
   localStorage.setItem("role", role);
 
@@ -114,6 +116,7 @@ function saveLoginData(user, remember) {
 }
 
 function clearOldLoginData() {
+  localStorage.removeItem("user");
   localStorage.removeItem("account");
   localStorage.removeItem("role");
   localStorage.removeItem("teacherId");

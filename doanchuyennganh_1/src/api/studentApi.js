@@ -1,3 +1,31 @@
+// const API_URL = "http://localhost:3060/api";
+
+// async function handleResponse(res, defaultMessage) {
+//   const text = await res.text();
+
+//   let data;
+
+//   try {
+//     data = text ? JSON.parse(text) : [];
+//   } catch {
+//     throw new Error(
+//       "Backend không trả về JSON. Có thể sai API hoặc server đang trả HTML."
+//     );
+//   }
+
+//   if (!res.ok) {
+//     throw new Error(data.message || defaultMessage);
+//   }
+
+//   return data;
+// }
+
+// export async function getStudents() {
+//   const res = await fetch(`${API_URL}/students`);
+
+//   return handleResponse(res, "Không thể tải danh sách sinh viên");
+// }
+
 const API_URL = "http://localhost:3060/api";
 
 /* =========================================================
@@ -423,5 +451,49 @@ export async function getAdminDashboard() {
     "/admin/dashboard",
     {},
     "Không thể tải dữ liệu dashboard"
+  );
+}
+
+/* =========================
+   STUDENT SELF-SERVICE API
+   (Dùng cho phân hệ Học sinh)
+========================= */
+
+/**
+ * Lấy thông tin cá nhân của học sinh đang đăng nhập.
+ * Truyền student_id qua query (giải pháp tạm - chưa có JWT).
+ * @param {number} studentId - id_student từ user object sau login
+ */
+export async function getMyStudentProfile(studentId) {
+  if (!studentId) {
+    throw new Error("Thiếu student_id. Vui lòng đăng nhập lại.");
+  }
+  return request(
+    `/student/profile?student_id=${studentId}`,
+    {},
+    "Không thể tải thông tin cá nhân"
+  );
+}
+
+/**
+ * Lấy lịch học của học sinh đang đăng nhập.
+ * @param {number} studentId - id_student từ user object sau login
+ * @param {Object} filters - { semester, school_year, status }
+ */
+export async function getMyStudentSchedule(studentId, filters = {}) {
+  if (!studentId) {
+    throw new Error("Thiếu student_id. Vui lòng đăng nhập lại.");
+  }
+
+  const params = new URLSearchParams({ student_id: studentId });
+
+  if (filters.semester) params.append("semester", filters.semester);
+  if (filters.school_year) params.append("school_year", filters.school_year);
+  if (filters.status) params.append("status", filters.status);
+
+  return request(
+    `/student/schedule?${params.toString()}`,
+    {},
+    "Không thể tải lịch học"
   );
 }
