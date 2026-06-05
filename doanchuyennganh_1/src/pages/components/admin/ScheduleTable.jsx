@@ -1,6 +1,6 @@
 export default function ScheduleTable({
-  schedules,
-  dayLabels,
+  schedules = [],
+  dayLabels = {},
   formatDateInput,
   formatTime,
   isToday,
@@ -9,27 +9,47 @@ export default function ScheduleTable({
   onDelete,
 }) {
   return (
-    <div className="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-200">
-      <div className="px-6 py-4 border-b border-slate-200 flex flex-col md:flex-row justify-between md:items-center gap-3 bg-white">
-        <div>
-          <h3 className="text-xl font-black text-slate-900">
-            Danh sách lịch học
-          </h3>
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      {/* HEADER */}
+      <div className="border-b border-slate-200 bg-white px-5 py-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-lg font-black text-slate-900">
+              Danh sách lịch học
+            </h3>
 
-          <p className="text-xs font-semibold text-slate-500 mt-1">
-            Hiển thị danh sách lịch học theo dạng bảng.
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              Hiển thị danh sách lịch học theo lớp, môn, giáo viên và phòng học.
+            </p>
+          </div>
+
+          <p className="text-sm font-bold text-slate-500">
+            Tổng số:{" "}
+            <span className="font-black text-slate-900">
+              {schedules.length}
+            </span>{" "}
+            lịch học
           </p>
         </div>
-
-        <span className="text-sm font-bold text-slate-500">
-          Tổng số: {schedules.length} lịch học
-        </span>
       </div>
 
+      {/* TABLE */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse min-w-[1000px]">
+        <table className="w-full min-w-[1050px] table-fixed text-left">
+          <colgroup>
+            <col className="w-[140px]" />
+            <col className="w-[190px]" />
+            <col className="w-[210px]" />
+            <col className="w-[150px]" />
+            <col className="w-[130px]" />
+            <col className="w-[150px]" />
+            <col className="w-[140px]" />
+            <col className="w-[140px]" />
+            <col className="w-[120px]" />
+          </colgroup>
+
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-200">
+            <tr className="border-b border-slate-200 bg-slate-50">
               <TableHead>Lớp học phần</TableHead>
               <TableHead>Môn học</TableHead>
               <TableHead>Giáo viên</TableHead>
@@ -42,133 +62,181 @@ export default function ScheduleTable({
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-100">
-            {schedules.map((item) => {
-              const today = isToday(item.day_of_week);
+          <tbody className="divide-y divide-slate-100 text-sm">
+            {schedules.length === 0 ? (
+              <tr>
+                <td colSpan="9" className="px-4 py-10 text-center">
+                  <p className="text-base font-black text-slate-700">
+                    Chưa có lịch học nào
+                  </p>
 
-              return (
-                <tr
-                  key={item.id_schedule}
-                  className={`hover:bg-blue-50/40 transition h-[72px] ${
-                    today ? "bg-blue-50/60 border-l-4 border-blue-600" : ""
-                  }`}
-                >
-                  <td className="px-6 py-4">
-                    <span className="text-sm font-black text-slate-900">
-                      {item.class_code || "-"}
-                    </span>
-                  </td>
+                  <p className="mt-1 text-sm font-medium text-slate-400">
+                    Hãy thêm lịch học mới hoặc thay đổi bộ lọc tìm kiếm.
+                  </p>
+                </td>
+              </tr>
+            ) : (
+              schedules.map((item) => {
+                const today = Boolean(isToday?.(item.day_of_week));
+                const teacherAvatar = getTeacherAvatar?.(item);
+                const teacherInitials = getTeacherInitials(item.teacher_name);
 
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-slate-900 font-bold">
-                      {item.subject_name || "-"}
-                    </div>
+                return (
+                  <tr
+                    key={item.id_schedule}
+                    className={`h-[68px] transition ${
+                      today
+                        ? "bg-blue-50/50 hover:bg-blue-50"
+                        : "hover:bg-slate-50"
+                    }`}
+                  >
+                    {/* LỚP HỌC PHẦN */}
+                    <td className="px-4 py-3">
+                      <div className="truncate font-black text-slate-900">
+                        {item.class_code || "-"}
+                      </div>
+                    </td>
 
-                    <div className="text-xs text-slate-500">
-                      {item.subject_code || "-"} - {item.credits || 0} tín chỉ
-                    </div>
-                  </td>
+                    {/* MÔN HỌC */}
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-900">
+                        {item.subject_name || "-"}
+                      </div>
+                    </td>
 
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={getTeacherAvatar(item)}
-                        alt={item.teacher_name || "Giáo viên"}
-                        className="w-10 h-10 rounded-2xl object-cover ring-2 ring-white shadow-sm"
-                      />
+                    {/* GIÁO VIÊN */}
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        {teacherAvatar ? (
+                          <img
+                            src={teacherAvatar}
+                            alt={item.teacher_name || "Giáo viên"}
+                            className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-slate-200"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-black text-slate-600">
+                            {teacherInitials}
+                          </div>
+                        )}
 
-                      <div>
-                        <div className="text-sm font-bold text-slate-900">
-                          {item.teacher_name || "-"}
-                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-bold text-slate-900">
+                            {item.teacher_name || "-"}
+                          </div>
 
-                        <div className="text-xs text-slate-500">
-                          {item.teacher_code || "-"}
+                          <div className="mt-0.5 truncate text-xs font-semibold text-slate-400">
+                            {item.teacher_code || "-"}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
+                    </td>
 
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">
-                      <span className="material-symbols-outlined text-[14px]">
-                        meeting_room
+                    {/* PHÒNG HỌC */}
+                    <td className="px-4 py-3">
+                      <div className="truncate font-bold text-slate-900">
+                        {item.room_code || "-"}
+                      </div>
+
+                      <div className="mt-0.5 truncate text-xs font-semibold text-slate-400">
+                        {item.room_name || "-"}
+                      </div>
+                    </td>
+
+                    {/* THỨ */}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex max-w-full rounded-full px-3 py-1 text-xs font-black ${
+                          today
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        <span className="truncate">
+                          {dayLabels[item.day_of_week] || item.day_of_week}
+                          {today ? " • Hôm nay" : ""}
+                        </span>
                       </span>
-                      {item.room_code || "-"}
-                      {item.room_name ? ` - ${item.room_name}` : ""}
-                    </span>
-                  </td>
+                    </td>
 
-                  <td className="px-6 py-4">
-                    <span
-                      className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold ${
-                        today
-                          ? "bg-blue-50 text-blue-700 ring-1 ring-blue-100"
-                          : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {dayLabels[item.day_of_week] || item.day_of_week}
-                      {today ? " • Hôm nay" : ""}
-                    </span>
-                  </td>
+                    {/* THỜI GIAN */}
+                    <td className="px-4 py-3">
+                      <div className="truncate font-bold text-slate-800">
+                        {formatTime(item.start_time)} -{" "}
+                        {formatTime(item.end_time)}
+                      </div>
+                    </td>
 
-                  <td className="px-6 py-4">
-                    <span className="text-sm font-bold text-slate-700">
-                      {formatTime(item.start_time)} - {formatTime(item.end_time)}
-                    </span>
-                  </td>
+                    {/* NGÀY BẮT ĐẦU */}
+                    <td className="px-4 py-3">
+                      <div className="truncate font-semibold text-slate-500">
+                        {formatDateInput(item.start_date) || "-"}
+                      </div>
+                    </td>
 
-                  <td className="px-6 py-4 text-sm text-slate-500">
-                    {formatDateInput(item.start_date) || "-"}
-                  </td>
+                    {/* NGÀY KẾT THÚC */}
+                    <td className="px-4 py-3">
+                      <div className="truncate font-semibold text-slate-500">
+                        {formatDateInput(item.end_date) || "-"}
+                      </div>
+                    </td>
 
-                  <td className="px-6 py-4 text-sm text-slate-500">
-                    {formatDateInput(item.end_date) || "-"}
-                  </td>
+                    {/* THAO TÁC */}
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onEdit(item)}
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-blue-100 hover:bg-blue-50 hover:text-blue-700"
+                          title="Sửa lịch học"
+                        >
+                          <span className="material-symbols-outlined text-[19px]">
+                            edit
+                          </span>
+                        </button>
 
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onEdit(item)}
-                        className="w-10 h-10 flex items-center justify-center rounded-2xl border border-slate-200 text-slate-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-100 transition"
-                        title="Sửa lịch học"
-                      >
-                        <span className="material-symbols-outlined text-[20px]">
-                          edit
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onDelete(item)}
-                        className="w-10 h-10 flex items-center justify-center rounded-2xl border border-red-100 text-red-500 hover:bg-red-50 transition"
-                        title="Xóa lịch học"
-                      >
-                        <span className="material-symbols-outlined text-[20px]">
-                          delete
-                        </span>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                        <button
+                          type="button"
+                          onClick={() => onDelete(item)}
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-red-100 text-red-500 transition hover:bg-red-50 hover:text-red-700"
+                          title="Xóa lịch học"
+                        >
+                          <span className="material-symbols-outlined text-[19px]">
+                            delete
+                          </span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
   );
 }
 
 function TableHead({ children, right = false }) {
   return (
     <th
-      className={`px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-wide whitespace-nowrap ${
+      className={`whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500 ${
         right ? "text-right" : ""
       }`}
     >
       {children}
     </th>
   );
+}
+
+function getTeacherInitials(name) {
+  if (!name) return "GV";
+
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(-2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
 }

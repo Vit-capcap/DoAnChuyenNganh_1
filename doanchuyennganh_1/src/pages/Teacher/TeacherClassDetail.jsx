@@ -184,12 +184,18 @@ function normalizeStudent(item = {}) {
     faculty: item.faculty || "",
     courseYear: item.course_year || item.courseYear || "",
     enrollmentStatus: item.enrollment_status || item.status || "STUDYING",
+    // faceRegistered:
+    //   item.face_registered === true ||
+    //   item.has_face === true ||
+    //   Boolean(item.id_face) ||
+    //   Boolean(item.face_image) ||
+    //   Boolean(item.face_embedding),
     faceRegistered:
       item.face_registered === true ||
+      item.face_registered === 1 ||
       item.has_face === true ||
-      Boolean(item.id_face) ||
-      Boolean(item.face_image) ||
-      Boolean(item.face_embedding),
+      item.has_face === 1 ||
+      Boolean(item.id_face),
     totalAttendance,
     presentCount: safeNumber(item.present_count || item.presentCount),
     lateCount: safeNumber(item.late_count || item.lateCount),
@@ -864,31 +870,47 @@ export default function TeacherClassDetail() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    let isMounted = true;
+  let isMounted = true;
 
-    async function loadClassDetail() {
-      if (!courseClassId) {
-        if (isMounted) {
-          setMessage("Không tìm thấy id lớp học phần.");
-          setLoading(false);
-        }
-
-        return;
+  async function loadClassDetail() {
+    if (!courseClassId) {
+      if (isMounted) {
+        setMessage("Không tìm thấy id lớp học phần.");
+        setLoading(false);
       }
 
-      try {
-        setLoading(true);
-        setMessage("");
+      return;
+    }
 
-        const [detailData, studentData, scheduleData, sessionData] =
-          await Promise.all([
-            getTeacherClassDetail(courseClassId),
-            getTeacherClassStudents(courseClassId),
-            getTeacherClassSchedules(courseClassId),
-            getTeacherClassSessions(courseClassId),
-          ]);
+    try {
+      setLoading(true);
+      setMessage("");
 
-        if (!isMounted) return;
+      /*
+        Dùng Promise.allSettled thay vì Promise.all.
+
+        Lý do:
+        - Promise.all: chỉ cần 1 API lỗi thì toàn bộ trang lỗi.
+        - Promise.allSettled: API nào lỗi thì chỉ phần đó lỗi,
+          các phần khác vẫn hiển thị được.
+      */
+      const [detailResult, studentResult, scheduleResult, sessionResult] =
+        await Promise.allSettled([
+          getTeacherClassDetail(courseClassId),
+          getTeacherClassStudents(courseClassId),
+          getTeacherClassSchedules(courseClassId),
+          getTeacherClassSessions(courseClassId),
+        ]);
+
+      if (!isMounted) return;
+
+      let errorMessages = [];
+
+      /*
+        1. Xử lý chi tiết lớp học
+      */
+      if (detailResult.status === "fulfilled") {
+        const detailData = detailResult.value;
 
         const detail =
           detailData?.classDetail ||
@@ -898,45 +920,105 @@ export default function TeacherClassDetail() {
           location.state?.classData ||
           {};
 
+        setClassDetail(normalizeClassDetail(detail));
+      } else {
+        console.error("Lỗi API chi tiết lớp:", detailResult.reason);
+
+        errorMessages.push(
+          detailResult.reason?.message || "Không thể tải thông tin lớp học"
+        );
+
+        if (location.state?.classData) {
+          setClassDetail(normalizeClassDetail(location.state.classData));
+        }
+      }
+
+      /*
+        2. Xử lý danh sách sinh viên
+      */
+      if (studentResult.status === "fulfilled") {
+        const studentData = studentResult.value;
+
         const rawStudents =
           studentData?.students ||
           studentData?.data ||
           studentData?.enrollments ||
           [];
 
-        const rawSchedules =
-          scheduleData?.schedules ||
-          scheduleData?.data ||
-          [];
-
-        const rawSessions =
-          sessionData?.sessions ||
-          sessionData?.data ||
-          [];
-
-        setClassDetail(normalizeClassDetail(detail));
         setStudents(rawStudents.map(normalizeStudent));
-        setSchedules(rawSchedules.map(normalizeSchedule));
-        setSessions(rawSessions.map(normalizeSession));
-      } catch (error) {
-        console.error("Lỗi tải chi tiết lớp học:", error);
+      } else {
+        console.error("Lỗi API sinh viên trong lớp:", studentResult.reason);
 
-        if (isMounted) {
-          setMessage(error.message || "Không thể tải chi tiết lớp học.");
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        errorMessages.push(
+          studentResult.reason?.message ||
+            "Không thể tải danh sách sinh viên trong lớp"
+        );
+
+        setStudents([]);
+      }
+
+      /*
+        3. Xử lý lịch học
+      */
+      if (scheduleResult.status === "fulfilled") {
+        const scheduleData = scheduleResult.value;
+
+        const rawSchedules = scheduleData?.schedules || scheduleData?.data || [];
+
+        setSchedules(rawSchedules.map(normalizeSchedule));
+      } else {
+        console.error("Lỗi API lịch học của lớp:", scheduleResult.reason);
+
+        errorMessages.push(
+          scheduleResult.reason?.message || "Không thể tải lịch học của lớp"
+        );
+
+        setSchedules([]);
+      }
+
+      /*
+        4. Xử lý buổi học
+      */
+      if (sessionResult.status === "fulfilled") {
+        const sessionData = sessionResult.value;
+
+        const rawSessions = sessionData?.sessions || sessionData?.data || [];
+
+        setSessions(rawSessions.map(normalizeSession));
+      } else {
+        console.error("Lỗi API buổi học của lớp:", sessionResult.reason);
+
+        errorMessages.push(
+          sessionResult.reason?.message || "Không thể tải buổi học của lớp"
+        );
+
+        setSessions([]);
+      }
+
+      if (errorMessages.length > 0) {
+        setMessage(errorMessages.join(" | "));
+      } else {
+        setMessage("");
+      }
+    } catch (error) {
+      console.error("Lỗi tải chi tiết lớp học:", error);
+
+      if (isMounted) {
+        setMessage(error.message || "Không thể tải chi tiết lớp học.");
+      }
+    } finally {
+      if (isMounted) {
+        setLoading(false);
       }
     }
+  }
 
-    loadClassDetail();
+  loadClassDetail();
 
-    return () => {
-      isMounted = false;
-    };
-  }, [courseClassId, location.state, refreshKey]);
+  return () => {
+    isMounted = false;
+  };
+}, [courseClassId, location.state, refreshKey]);
 
   const filteredStudents = useMemo(() => {
     const keyword = search.trim().toLowerCase();

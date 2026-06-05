@@ -3,96 +3,389 @@ import db from "../config/db.js";
 
 const router = express.Router();
 
-const validRoles = ["ADMIN", "TEACHER", "STUDENT"];
-const validStatuses = ["ACTIVE", "LOCKED"];
+/* =========================================================
+   FILE: accountRoutes.js
+   ---------------------------------------------------------
+   Chức năng:
+   - Lấy danh sách tài khoản
+   - Lấy dữ liệu option cho form thêm/sửa tài khoản
+   - Thêm tài khoản
+   - Cập nhật tài khoản
+   - Khóa / mở khóa tài khoản
+   - Xóa tài khoản
+
+   LƯU Ý DATABASE:
+   Database mới dùng tên bảng chữ thường:
+   - account
+   - teacher
+   - student
+
+   Thứ tự route:
+   1. GET    /api/accounts/options
+   2. GET    /api/accounts
+   3. POST   /api/accounts
+   4. PUT    /api/accounts/:id
+   5. PATCH  /api/accounts/:id/status
+   6. DELETE /api/accounts/:id
+========================================================= */
+
+
+/* =========================================================
+   1. HẰNG SỐ VÀ HELPER
+========================================================= */
 
 /*
 |--------------------------------------------------------------------------
-| API: Đăng nhập
+| VALID_ROLES
 |--------------------------------------------------------------------------
-| POST /api/accounts/login
-| Body: { username, password }
-| Trả về: { success, user: { id_account, username, role, student_id, teacher_id, status } }
+| Chức năng:
+| - Danh sách vai trò hợp lệ của tài khoản.
 |--------------------------------------------------------------------------
 */
-router.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
+const VALID_ROLES = ["ADMIN", "TEACHER", "STUDENT"];
 
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Vui lòng nhập tên đăng nhập và mật khẩu",
-      });
-    }
+/*
+|--------------------------------------------------------------------------
+| VALID_STATUSES
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Danh sách trạng thái hợp lệ của tài khoản.
+| - ACTIVE: được đăng nhập.
+| - LOCKED: bị khóa.
+|--------------------------------------------------------------------------
+*/
+const VALID_STATUSES = ["ACTIVE", "LOCKED"];
 
-    const [rows] = await db.query(
-      `
-      SELECT
-        id_account,
-        username,
-        role,
-        student_id,
-        teacher_id,
-        status
-      FROM Account
-      WHERE username = ? AND password = ?
-      LIMIT 1
-      `,
-      [username.trim(), password]
-    );
+/*
+|--------------------------------------------------------------------------
+| normalizeText()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuẩn hóa chuỗi.
+| - Tránh lỗi undefined/null.
+| - Xóa khoảng trắng đầu/cuối.
+|--------------------------------------------------------------------------
+*/
+function normalizeText(value) {
+  return String(value || "").trim();
+}
 
-    if (rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: "Tên đăng nhập hoặc mật khẩu không đúng",
-      });
-    }
+/*
+|--------------------------------------------------------------------------
+| normalizeRole()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuyển role về chữ hoa.
+| - Ví dụ: teacher -> TEACHER.
+|--------------------------------------------------------------------------
+*/
+function normalizeRole(value) {
+  return normalizeText(value).toUpperCase();
+}
 
-    const user = rows[0];
+/*
+|--------------------------------------------------------------------------
+| normalizeStatus()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuyển status về chữ hoa.
+| - Nếu không truyền thì mặc định ACTIVE.
+|--------------------------------------------------------------------------
+*/
+function normalizeStatus(value) {
+  const status = normalizeText(value).toUpperCase();
 
-    if (user.status === "LOCKED") {
-      return res.status(403).json({
-        success: false,
-        message: "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
-      });
-    }
+  return status || "ACTIVE";
+}
 
-    // Cập nhật last_login
-    await db.query(
-      `UPDATE Account SET last_login = NOW() WHERE id_account = ?`,
-      [user.id_account]
-    );
+/*
+|--------------------------------------------------------------------------
+| toNumberOrNull()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuyển id về Number.
+| - Nếu không có id thì trả null.
+|--------------------------------------------------------------------------
+*/
+function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === "") return null;
 
-    return res.status(200).json({
-      success: true,
-      message: "Đăng nhập thành công",
-      user: {
-        id_account: user.id_account,
-        username: user.username,
-        role: user.role,
-        student_id: user.student_id,
-        teacher_id: user.teacher_id,
-        status: user.status,
-      },
-    });
-  } catch (error) {
-    console.error("Lỗi đăng nhập:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng nhập",
-      error: error.message,
-    });
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| sendServerError()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuẩn hóa lỗi server trả về frontend.
+|--------------------------------------------------------------------------
+*/
+function sendServerError(res, message, error) {
+  return res.status(500).json({
+    message,
+    error: error.message,
+    code: error.code,
+  });
+}
+
+/*
+|--------------------------------------------------------------------------
+| validateAccountPayload()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra dữ liệu thêm/sửa tài khoản.
+| - Dùng chung cho POST và PUT.
+|--------------------------------------------------------------------------
+*/
+function validateAccountPayload({
+  username,
+  password,
+  role,
+  teacher_id,
+  student_id,
+  status,
+  isUpdate = false,
+}) {
+  if (!username || !role) {
+    return {
+      valid: false,
+      message: "Vui lòng nhập username và vai trò",
+    };
   }
-});
+
+  if (!isUpdate && !password) {
+    return {
+      valid: false,
+      message: "Vui lòng nhập mật khẩu",
+    };
+  }
+
+  if (password && password.length < 8) {
+    return {
+      valid: false,
+      message: "Mật khẩu phải có ít nhất 8 ký tự",
+    };
+  }
+
+  if (!VALID_ROLES.includes(role)) {
+    return {
+      valid: false,
+      message: "Vai trò không hợp lệ",
+    };
+  }
+
+  if (!VALID_STATUSES.includes(status)) {
+    return {
+      valid: false,
+      message: "Trạng thái tài khoản không hợp lệ",
+    };
+  }
+
+  if (role === "TEACHER" && !teacher_id) {
+    return {
+      valid: false,
+      message: "Vui lòng chọn giáo viên cho tài khoản giáo viên",
+    };
+  }
+
+  if (role === "STUDENT" && !student_id) {
+    return {
+      valid: false,
+      message: "Vui lòng chọn sinh viên cho tài khoản sinh viên",
+    };
+  }
+
+  return {
+    valid: true,
+    message: "",
+  };
+}
 
 /*
 |--------------------------------------------------------------------------
-| API: Lấy dữ liệu option cho form tài khoản
+| checkAccountExists()
 |--------------------------------------------------------------------------
-| GET /api/accounts/options
+| Chức năng:
+| - Kiểm tra tài khoản có tồn tại theo id_account hay không.
 |--------------------------------------------------------------------------
 */
+async function checkAccountExists(id) {
+  const [accounts] = await db.query(
+    `
+    SELECT id_account
+    FROM account
+    WHERE id_account = ?
+    LIMIT 1
+    `,
+    [id]
+  );
+
+  return accounts.length > 0;
+}
+
+/*
+|--------------------------------------------------------------------------
+| checkUsernameDuplicate()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra username đã tồn tại chưa.
+| - Khi update thì bỏ qua chính account hiện tại.
+|--------------------------------------------------------------------------
+*/
+async function checkUsernameDuplicate(username, ignoreAccountId = null) {
+  const params = [username];
+
+  let sql = `
+    SELECT id_account
+    FROM account
+    WHERE username = ?
+  `;
+
+  if (ignoreAccountId) {
+    sql += ` AND id_account <> ?`;
+    params.push(ignoreAccountId);
+  }
+
+  sql += ` LIMIT 1`;
+
+  const [rows] = await db.query(sql, params);
+
+  return rows.length > 0;
+}
+
+/*
+|--------------------------------------------------------------------------
+| checkTeacherValid()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra teacher_id tồn tại.
+| - Kiểm tra giáo viên đã có tài khoản khác chưa.
+|--------------------------------------------------------------------------
+*/
+async function checkTeacherValid(teacherId, ignoreAccountId = null) {
+  const [teachers] = await db.query(
+    `
+    SELECT id_teacher
+    FROM teacher
+    WHERE id_teacher = ?
+    LIMIT 1
+    `,
+    [teacherId]
+  );
+
+  if (teachers.length === 0) {
+    return {
+      valid: false,
+      status: 404,
+      message: "Giáo viên không tồn tại",
+    };
+  }
+
+  const params = [teacherId];
+
+  let sql = `
+    SELECT id_account
+    FROM account
+    WHERE teacher_id = ?
+      AND role = 'TEACHER'
+  `;
+
+  if (ignoreAccountId) {
+    sql += ` AND id_account <> ?`;
+    params.push(ignoreAccountId);
+  }
+
+  sql += ` LIMIT 1`;
+
+  const [accounts] = await db.query(sql, params);
+
+  if (accounts.length > 0) {
+    return {
+      valid: false,
+      status: 409,
+      message: "Giáo viên này đã có tài khoản",
+    };
+  }
+
+  return {
+    valid: true,
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| checkStudentValid()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra student_id tồn tại.
+| - Kiểm tra sinh viên đã có tài khoản khác chưa.
+|--------------------------------------------------------------------------
+*/
+async function checkStudentValid(studentId, ignoreAccountId = null) {
+  const [students] = await db.query(
+    `
+    SELECT id_student
+    FROM student
+    WHERE id_student = ?
+    LIMIT 1
+    `,
+    [studentId]
+  );
+
+  if (students.length === 0) {
+    return {
+      valid: false,
+      status: 404,
+      message: "Sinh viên không tồn tại",
+    };
+  }
+
+  const params = [studentId];
+
+  let sql = `
+    SELECT id_account
+    FROM account
+    WHERE student_id = ?
+      AND role = 'STUDENT'
+  `;
+
+  if (ignoreAccountId) {
+    sql += ` AND id_account <> ?`;
+    params.push(ignoreAccountId);
+  }
+
+  sql += ` LIMIT 1`;
+
+  const [accounts] = await db.query(sql, params);
+
+  if (accounts.length > 0) {
+    return {
+      valid: false,
+      status: 409,
+      message: "Sinh viên này đã có tài khoản",
+    };
+  }
+
+  return {
+    valid: true,
+  };
+}
+
+
+/* =========================================================
+   2. API: LẤY OPTIONS CHO FORM TÀI KHOẢN
+   ---------------------------------------------------------
+   Method: GET
+   URL: /api/accounts/options
+
+   Chức năng:
+   - Lấy danh sách giáo viên chưa có tài khoản.
+   - Lấy danh sách sinh viên chưa có tài khoản.
+   - Trả roles và statuses cho frontend.
+========================================================= */
 router.get("/options", async (req, res) => {
   try {
     const [teachers] = await db.query(
@@ -103,9 +396,10 @@ router.get("/options", async (req, res) => {
         t.full_name,
         t.email,
         t.avatar
-      FROM Teacher t
-      LEFT JOIN Account a
+      FROM teacher t
+      LEFT JOIN account a
         ON a.teacher_id = t.id_teacher
+       AND a.role = 'TEACHER'
       WHERE a.id_account IS NULL
       ORDER BY t.full_name ASC
       `
@@ -120,59 +414,63 @@ router.get("/options", async (req, res) => {
         s.email,
         s.avatar,
         s.class_name
-      FROM Student s
-      LEFT JOIN Account a
+      FROM student s
+      LEFT JOIN account a
         ON a.student_id = s.id_student
+       AND a.role = 'STUDENT'
       WHERE a.id_account IS NULL
       ORDER BY s.full_name ASC
       `
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       teachers,
       students,
-      roles: validRoles,
-      statuses: validStatuses,
+      roles: VALID_ROLES,
+      statuses: VALID_STATUSES,
     });
   } catch (error) {
     console.error("Lỗi lấy options tài khoản:", error);
-
-    res.status(500).json({
-      message: "Lỗi lấy options tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi lấy options tài khoản", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Lấy danh sách tài khoản + thống kê
-|--------------------------------------------------------------------------
-| GET /api/accounts
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   3. API: LẤY DANH SÁCH TÀI KHOẢN + THỐNG KÊ
+   ---------------------------------------------------------
+   Method: GET
+   URL: /api/accounts
+
+   Query:
+   - search
+   - role
+   - status
+   - page
+   - limit
+========================================================= */
 router.get("/", async (req, res) => {
   try {
-    const search = req.query.search || "";
-    const role = req.query.role || "";
-    const status = req.query.status || "";
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 10);
+    const search = normalizeText(req.query.search);
+    const role = normalizeRole(req.query.role);
+    const status = normalizeStatus(req.query.status || "");
+    const page = Math.max(Number(req.query.page || 1), 1);
+    const limit = Math.max(Number(req.query.limit || 10), 1);
     const offset = (page - 1) * limit;
 
-    let whereSql = `
-      WHERE
-        (
-          a.username LIKE ?
-          OR t.full_name LIKE ?
-          OR t.email LIKE ?
-          OR t.teacher_code LIKE ?
-          OR s.full_name LIKE ?
-          OR s.email LIKE ?
-          OR s.student_code LIKE ?
-        )
-    `;
+    const conditions = [
+      `
+      (
+        a.username LIKE ?
+        OR t.full_name LIKE ?
+        OR t.email LIKE ?
+        OR t.teacher_code LIKE ?
+        OR s.full_name LIKE ?
+        OR s.email LIKE ?
+        OR s.student_code LIKE ?
+      )
+      `,
+    ];
 
     const params = [
       `%${search}%`,
@@ -185,29 +483,43 @@ router.get("/", async (req, res) => {
     ];
 
     if (role) {
-      whereSql += ` AND a.role = ?`;
+      if (!VALID_ROLES.includes(role)) {
+        return res.status(400).json({
+          message: "Vai trò không hợp lệ",
+        });
+      }
+
+      conditions.push("a.role = ?");
       params.push(role);
     }
 
-    if (status) {
-      whereSql += ` AND a.status = ?`;
+    if (req.query.status) {
+      if (!VALID_STATUSES.includes(status)) {
+        return res.status(400).json({
+          message: "Trạng thái tài khoản không hợp lệ",
+        });
+      }
+
+      conditions.push("a.status = ?");
       params.push(status);
     }
+
+    const whereSql = `WHERE ${conditions.join(" AND ")}`;
 
     const [countRows] = await db.query(
       `
       SELECT COUNT(*) AS total
-      FROM Account a
-      LEFT JOIN Teacher t
+      FROM account a
+      LEFT JOIN teacher t
         ON t.id_teacher = a.teacher_id
-      LEFT JOIN Student s
+      LEFT JOIN student s
         ON s.id_student = a.student_id
       ${whereSql}
       `,
       params
     );
 
-    const total = countRows[0]?.total || 0;
+    const total = Number(countRows[0]?.total || 0);
 
     const [accounts] = await db.query(
       `
@@ -255,10 +567,12 @@ router.get("/", async (req, res) => {
           ELSE 'ADMIN'
         END AS user_code
 
-      FROM Account a
-      LEFT JOIN Teacher t
+      FROM account a
+
+      LEFT JOIN teacher t
         ON t.id_teacher = a.teacher_id
-      LEFT JOIN Student s
+
+      LEFT JOIN student s
         ON s.id_student = a.student_id
 
       ${whereSql}
@@ -277,11 +591,11 @@ router.get("/", async (req, res) => {
         SUM(CASE WHEN role = 'TEACHER' THEN 1 ELSE 0 END) AS teacher_count,
         SUM(CASE WHEN role = 'STUDENT' THEN 1 ELSE 0 END) AS student_count,
         SUM(CASE WHEN status = 'LOCKED' THEN 1 ELSE 0 END) AS locked_count
-      FROM Account
+      FROM account
       `
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       accounts,
       stats: statsRows[0] || {
         total_accounts: 0,
@@ -299,149 +613,81 @@ router.get("/", async (req, res) => {
     });
   } catch (error) {
     console.error("Lỗi lấy danh sách tài khoản:", error);
-
-    res.status(500).json({
-      message: "Lỗi lấy danh sách tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi lấy danh sách tài khoản", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Thêm tài khoản
-|--------------------------------------------------------------------------
-| POST /api/accounts
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   4. API: THÊM TÀI KHOẢN
+   ---------------------------------------------------------
+   Method: POST
+   URL: /api/accounts
+
+   Body:
+   - username
+   - password
+   - role
+   - teacher_id
+   - student_id
+   - status
+========================================================= */
 router.post("/", async (req, res) => {
-  const { username, password, role, teacher_id, student_id, status } = req.body;
+  const username = normalizeText(req.body.username);
+  const password = normalizeText(req.body.password);
+  const role = normalizeRole(req.body.role);
+  const status = normalizeStatus(req.body.status);
+  const teacherId = toNumberOrNull(req.body.teacher_id);
+  const studentId = toNumberOrNull(req.body.student_id);
 
-  if (!username || !password || !role) {
-    return res.status(400).json({
-      message: "Vui lòng nhập username, mật khẩu và vai trò",
-    });
-  }
+  const validation = validateAccountPayload({
+    username,
+    password,
+    role,
+    teacher_id: teacherId,
+    student_id: studentId,
+    status,
+    isUpdate: false,
+  });
 
-  if (password.length < 8) {
+  if (!validation.valid) {
     return res.status(400).json({
-      message: "Mật khẩu phải có ít nhất 8 ký tự",
-    });
-  }
-
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({
-      message: "Vai trò không hợp lệ",
-    });
-  }
-
-  if (status && !validStatuses.includes(status)) {
-    return res.status(400).json({
-      message: "Trạng thái tài khoản không hợp lệ",
-    });
-  }
-
-  if (role === "TEACHER" && !teacher_id) {
-    return res.status(400).json({
-      message: "Vui lòng chọn giáo viên cho tài khoản giáo viên",
-    });
-  }
-
-  if (role === "STUDENT" && !student_id) {
-    return res.status(400).json({
-      message: "Vui lòng chọn sinh viên cho tài khoản sinh viên",
+      message: validation.message,
     });
   }
 
   try {
-    const [existingUsername] = await db.query(
-      `
-      SELECT id_account
-      FROM Account
-      WHERE username = ?
-      LIMIT 1
-      `,
-      [username.trim()]
-    );
+    const usernameDuplicate = await checkUsernameDuplicate(username);
 
-    if (existingUsername.length > 0) {
+    if (usernameDuplicate) {
       return res.status(409).json({
         message: "Username đã tồn tại",
       });
     }
 
     if (role === "TEACHER") {
-      const [teachers] = await db.query(
-        `
-        SELECT id_teacher
-        FROM Teacher
-        WHERE id_teacher = ?
-        LIMIT 1
-        `,
-        [Number(teacher_id)]
-      );
+      const teacherCheck = await checkTeacherValid(teacherId);
 
-      if (teachers.length === 0) {
-        return res.status(404).json({
-          message: "Giáo viên không tồn tại",
-        });
-      }
-
-      const [existingTeacherAccount] = await db.query(
-        `
-        SELECT id_account
-        FROM Account
-        WHERE teacher_id = ?
-        LIMIT 1
-        `,
-        [Number(teacher_id)]
-      );
-
-      if (existingTeacherAccount.length > 0) {
-        return res.status(409).json({
-          message: "Giáo viên này đã có tài khoản",
+      if (!teacherCheck.valid) {
+        return res.status(teacherCheck.status).json({
+          message: teacherCheck.message,
         });
       }
     }
 
     if (role === "STUDENT") {
-      const [students] = await db.query(
-        `
-        SELECT id_student
-        FROM Student
-        WHERE id_student = ?
-        LIMIT 1
-        `,
-        [Number(student_id)]
-      );
+      const studentCheck = await checkStudentValid(studentId);
 
-      if (students.length === 0) {
-        return res.status(404).json({
-          message: "Sinh viên không tồn tại",
-        });
-      }
-
-      const [existingStudentAccount] = await db.query(
-        `
-        SELECT id_account
-        FROM Account
-        WHERE student_id = ?
-        LIMIT 1
-        `,
-        [Number(student_id)]
-      );
-
-      if (existingStudentAccount.length > 0) {
-        return res.status(409).json({
-          message: "Sinh viên này đã có tài khoản",
+      if (!studentCheck.valid) {
+        return res.status(studentCheck.status).json({
+          message: studentCheck.message,
         });
       }
     }
 
     const [result] = await db.query(
       `
-      INSERT INTO Account (
+      INSERT INTO account (
         username,
         password,
         role,
@@ -452,16 +698,16 @@ router.post("/", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?)
       `,
       [
-        username.trim(),
+        username,
         password,
         role,
-        role === "TEACHER" ? Number(teacher_id) : null,
-        role === "STUDENT" ? Number(student_id) : null,
-        status || "ACTIVE",
+        role === "TEACHER" ? teacherId : null,
+        role === "STUDENT" ? studentId : null,
+        status,
       ]
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Thêm tài khoản thành công",
       id_account: result.insertId,
     });
@@ -476,129 +722,79 @@ router.post("/", async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      message: "Lỗi thêm tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi thêm tài khoản", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Cập nhật tài khoản
-|--------------------------------------------------------------------------
-| PUT /api/accounts/:id
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   5. API: CẬP NHẬT TÀI KHOẢN
+   ---------------------------------------------------------
+   Method: PUT
+   URL: /api/accounts/:id
+
+   Lưu ý:
+   - Nếu không truyền password thì giữ mật khẩu cũ.
+========================================================= */
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
-  const { username, password, role, teacher_id, student_id, status } = req.body;
 
-  if (!username || !role) {
-    return res.status(400).json({
-      message: "Vui lòng nhập username và vai trò",
-    });
-  }
+  const username = normalizeText(req.body.username);
+  const password = normalizeText(req.body.password);
+  const role = normalizeRole(req.body.role);
+  const status = normalizeStatus(req.body.status);
+  const teacherId = toNumberOrNull(req.body.teacher_id);
+  const studentId = toNumberOrNull(req.body.student_id);
 
-  if (password && password.length < 8) {
-    return res.status(400).json({
-      message: "Mật khẩu phải có ít nhất 8 ký tự",
-    });
-  }
+  const validation = validateAccountPayload({
+    username,
+    password,
+    role,
+    teacher_id: teacherId,
+    student_id: studentId,
+    status,
+    isUpdate: true,
+  });
 
-  if (!validRoles.includes(role)) {
+  if (!validation.valid) {
     return res.status(400).json({
-      message: "Vai trò không hợp lệ",
-    });
-  }
-
-  if (status && !validStatuses.includes(status)) {
-    return res.status(400).json({
-      message: "Trạng thái tài khoản không hợp lệ",
-    });
-  }
-
-  if (role === "TEACHER" && !teacher_id) {
-    return res.status(400).json({
-      message: "Vui lòng chọn giáo viên cho tài khoản giáo viên",
-    });
-  }
-
-  if (role === "STUDENT" && !student_id) {
-    return res.status(400).json({
-      message: "Vui lòng chọn sinh viên cho tài khoản sinh viên",
+      message: validation.message,
     });
   }
 
   try {
-    const [accounts] = await db.query(
-      `
-      SELECT id_account
-      FROM Account
-      WHERE id_account = ?
-      LIMIT 1
-      `,
-      [id]
-    );
+    const accountExists = await checkAccountExists(id);
 
-    if (accounts.length === 0) {
+    if (!accountExists) {
       return res.status(404).json({
         message: "Không tìm thấy tài khoản",
       });
     }
 
-    const [duplicates] = await db.query(
-      `
-      SELECT id_account
-      FROM Account
-      WHERE username = ?
-      AND id_account <> ?
-      LIMIT 1
-      `,
-      [username.trim(), id]
-    );
+    const usernameDuplicate = await checkUsernameDuplicate(username, id);
 
-    if (duplicates.length > 0) {
+    if (usernameDuplicate) {
       return res.status(409).json({
         message: "Username đã tồn tại",
       });
     }
 
     if (role === "TEACHER") {
-      const [teacherAccounts] = await db.query(
-        `
-        SELECT id_account
-        FROM Account
-        WHERE teacher_id = ?
-        AND id_account <> ?
-        LIMIT 1
-        `,
-        [Number(teacher_id), id]
-      );
+      const teacherCheck = await checkTeacherValid(teacherId, id);
 
-      if (teacherAccounts.length > 0) {
-        return res.status(409).json({
-          message: "Giáo viên này đã có tài khoản khác",
+      if (!teacherCheck.valid) {
+        return res.status(teacherCheck.status).json({
+          message: teacherCheck.message,
         });
       }
     }
 
     if (role === "STUDENT") {
-      const [studentAccounts] = await db.query(
-        `
-        SELECT id_account
-        FROM Account
-        WHERE student_id = ?
-        AND id_account <> ?
-        LIMIT 1
-        `,
-        [Number(student_id), id]
-      );
+      const studentCheck = await checkStudentValid(studentId, id);
 
-      if (studentAccounts.length > 0) {
-        return res.status(409).json({
-          message: "Sinh viên này đã có tài khoản khác",
+      if (!studentCheck.valid) {
+        return res.status(studentCheck.status).json({
+          message: studentCheck.message,
         });
       }
     }
@@ -606,7 +802,7 @@ router.put("/:id", async (req, res) => {
     if (password) {
       await db.query(
         `
-        UPDATE Account
+        UPDATE account
         SET
           username = ?,
           password = ?,
@@ -617,19 +813,19 @@ router.put("/:id", async (req, res) => {
         WHERE id_account = ?
         `,
         [
-          username.trim(),
+          username,
           password,
           role,
-          role === "TEACHER" ? Number(teacher_id) : null,
-          role === "STUDENT" ? Number(student_id) : null,
-          status || "ACTIVE",
+          role === "TEACHER" ? teacherId : null,
+          role === "STUDENT" ? studentId : null,
+          status,
           id,
         ]
       );
     } else {
       await db.query(
         `
-        UPDATE Account
+        UPDATE account
         SET
           username = ?,
           role = ?,
@@ -639,59 +835,58 @@ router.put("/:id", async (req, res) => {
         WHERE id_account = ?
         `,
         [
-          username.trim(),
+          username,
           role,
-          role === "TEACHER" ? Number(teacher_id) : null,
-          role === "STUDENT" ? Number(student_id) : null,
-          status || "ACTIVE",
+          role === "TEACHER" ? teacherId : null,
+          role === "STUDENT" ? studentId : null,
+          status,
           id,
         ]
       );
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Cập nhật tài khoản thành công",
     });
   } catch (error) {
     console.error("Lỗi cập nhật tài khoản:", error);
 
-    res.status(500).json({
-      message: "Lỗi cập nhật tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        message: "Username đã tồn tại hoặc người dùng đã có tài khoản",
+        error: error.message,
+        code: error.code,
+      });
+    }
+
+    return sendServerError(res, "Lỗi cập nhật tài khoản", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Khóa / mở khóa tài khoản
-|--------------------------------------------------------------------------
-| PATCH /api/accounts/:id/status
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   6. API: KHÓA / MỞ KHÓA TÀI KHOẢN
+   ---------------------------------------------------------
+   Method: PATCH
+   URL: /api/accounts/:id/status
+
+   Body:
+   - status: ACTIVE hoặc LOCKED
+========================================================= */
 router.patch("/:id/status", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const status = normalizeStatus(req.body.status);
 
-    if (!validStatuses.includes(status)) {
+    if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({
         message: "Trạng thái tài khoản không hợp lệ",
       });
     }
 
-    const [accounts] = await db.query(
-      `
-      SELECT id_account
-      FROM Account
-      WHERE id_account = ?
-      LIMIT 1
-      `,
-      [id]
-    );
+    const accountExists = await checkAccountExists(id);
 
-    if (accounts.length === 0) {
+    if (!accountExists) {
       return res.status(404).json({
         message: "Không tìm thấy tài khoản",
       });
@@ -699,14 +894,14 @@ router.patch("/:id/status", async (req, res) => {
 
     await db.query(
       `
-      UPDATE Account
+      UPDATE account
       SET status = ?
       WHERE id_account = ?
       `,
       [status, id]
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message:
         status === "LOCKED"
           ? "Khóa tài khoản thành công"
@@ -714,37 +909,24 @@ router.patch("/:id/status", async (req, res) => {
     });
   } catch (error) {
     console.error("Lỗi đổi trạng thái tài khoản:", error);
-
-    res.status(500).json({
-      message: "Lỗi đổi trạng thái tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi đổi trạng thái tài khoản", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Xóa tài khoản
-|--------------------------------------------------------------------------
-| DELETE /api/accounts/:id
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   7. API: XÓA TÀI KHOẢN
+   ---------------------------------------------------------
+   Method: DELETE
+   URL: /api/accounts/:id
+========================================================= */
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [accounts] = await db.query(
-      `
-      SELECT id_account
-      FROM Account
-      WHERE id_account = ?
-      LIMIT 1
-      `,
-      [id]
-    );
+    const accountExists = await checkAccountExists(id);
 
-    if (accounts.length === 0) {
+    if (!accountExists) {
       return res.status(404).json({
         message: "Không tìm thấy tài khoản",
       });
@@ -752,23 +934,18 @@ router.delete("/:id", async (req, res) => {
 
     await db.query(
       `
-      DELETE FROM Account
+      DELETE FROM account
       WHERE id_account = ?
       `,
       [id]
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Xóa tài khoản thành công",
     });
   } catch (error) {
     console.error("Lỗi xóa tài khoản:", error);
-
-    res.status(500).json({
-      message: "Lỗi xóa tài khoản",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi xóa tài khoản", error);
   }
 });
 
