@@ -5,7 +5,10 @@ const FACE_RECOGNIZE_URL = "http://localhost:8001/recognize";
 
 const CLOCK_INTERVAL_MS = 1000;
 const RECOGNITION_INTERVAL_MS = 2500;
-const LOCK_BEFORE_END_MINUTES = 15;
+
+const OPEN_BEFORE_START_MINUTES = 15;
+const LATE_AFTER_START_MINUTES = 15;
+const CLOSE_BEFORE_END_MINUTES = 15;
 
 export default function CameraRoomPage() {
   const videoRef = useRef(null);
@@ -14,6 +17,9 @@ export default function CameraRoomPage() {
 
   const recognizingRef = useRef(false);
   const cameraActiveRef = useRef(false);
+  const cameraLoadingRef = useRef(false);
+  const autoOpenTriedRef = useRef(false);
+
   const roomInfoRef = useRef(null);
   const todaySessionRef = useRef(null);
   const recognizeFrameRef = useRef(null);
@@ -104,10 +110,101 @@ export default function CameraRoomPage() {
     );
   }, []);
 
+  const startCamera = useCallback(
+    async (autoStart = false) => {
+      const session = todaySessionRef.current;
+      const room = roomInfoRef.current;
+
+      if (!room) {
+        if (!autoStart) {
+          showMessage("Vui lòng kiểm tra phòng trước khi bật camera.", "warning");
+        }
+
+        return;
+      }
+
+      if (!session) {
+        if (!autoStart) {
+          showMessage("Phòng hiện chưa có buổi học hôm nay.", "warning");
+        }
+
+        return;
+      }
+
+      const status = getCameraStatus(session, new Date());
+
+      if (!status.canOpen) {
+        if (!autoStart) {
+          showMessage(status.description, "warning");
+        }
+
+        return;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        showMessage("Trình duyệt hiện tại không hỗ trợ mở camera.", "error");
+        return;
+      }
+
+      if (cameraActiveRef.current || cameraLoadingRef.current) {
+        return;
+      }
+
+      cameraLoadingRef.current = true;
+      setCameraLoading(true);
+      setMessage("");
+
+      try {
+        // Yêu cầu quyền truy cập camera và lấy luồng video
+        // WebRTC = công nghệ để web bật camera và lấy video trực tiếp
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user",
+          },
+          audio: false,
+        });
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+
+        resetRecognitionState();
+
+        cameraActiveRef.current = true;
+        setCameraActive(true);
+
+        showMessage(
+          autoStart
+            ? "Camera đã tự động mở theo thời gian quy định. Khi nhận diện đúng, sinh viên cần bấm OK để xác nhận điểm danh."
+            : "Camera đã được bật. Khi nhận diện đúng, sinh viên cần bấm OK để xác nhận điểm danh.",
+          "success"
+        );
+      } catch (error) {
+        console.error("Lỗi mở camera:", error);
+
+        showMessage(
+          autoStart
+            ? "Đã đến giờ mở camera nhưng trình duyệt chưa cho phép truy cập camera. Vui lòng bấm Bật camera."
+            : "Không thể mở camera. Vui lòng cho phép trình duyệt truy cập camera.",
+          "error"
+        );
+      } finally {
+        cameraLoadingRef.current = false;
+        setCameraLoading(false);
+      }
+    },
+    [resetRecognitionState, showMessage]
+  );
+
   const recognizeCurrentFrame = useCallback(async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const session = todaySessionRef.current;
+    const room = roomInfoRef.current;
 
     if (!video || !canvas) return;
     if (!cameraActiveRef.current) return;
@@ -143,7 +240,12 @@ export default function CameraRoomPage() {
     setRecognizing(true);
 
     try {
-      const data = await recognizeFace(imageBase64);
+      const data = await recognizeFace({
+        imageBase64,
+        idSession: session.id_session,
+        cameraId: getCameraId(room),
+      });
+
       const faces = normalizeFaces(data?.faces);
 
       setLastRecognizedAt(new Date());
@@ -183,9 +285,15 @@ export default function CameraRoomPage() {
           return;
         }
 
+        const expectedStatus = getAttendanceStatusBySessionTime(
+          session,
+          new Date()
+        );
+
         const faceWithImage = {
           ...validFace,
           imageBase64,
+          expectedStatus,
         };
 
         setPendingFace(faceWithImage);
@@ -202,7 +310,6 @@ export default function CameraRoomPage() {
       if (unknownFace) {
         setPendingFace(null);
         setRecognitionResults(faces);
-
         showMessage("Không xác định được sinh viên. Vui lòng thử lại.", "warning");
         return;
       }
@@ -234,15 +341,15 @@ export default function CameraRoomPage() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = new Date();
+
       setCurrentTime(now);
 
       const session = todaySessionRef.current;
-
-      if (!cameraActiveRef.current || !session) return;
+      if (!session) return;
 
       const status = getCameraStatus(session, now);
 
-      if (!status.canOpen) {
+      if (cameraActiveRef.current && !status.canOpen) {
         stopCameraStreamOnly();
 
         cameraActiveRef.current = false;
@@ -257,13 +364,26 @@ export default function CameraRoomPage() {
 
         setMessage(status.description);
         setMessageType("warning");
+
+        return;
+      }
+
+      if (!cameraActiveRef.current && status.canOpen) {
+        if (!autoOpenTriedRef.current && !cameraLoadingRef.current) {
+          autoOpenTriedRef.current = true;
+          startCamera(true);
+        }
+      }
+
+      if (!status.canOpen && status.type === "waiting") {
+        autoOpenTriedRef.current = false;
       }
     }, CLOCK_INTERVAL_MS);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [stopCameraStreamOnly]);
+  }, [startCamera, stopCameraStreamOnly]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -287,8 +407,8 @@ export default function CameraRoomPage() {
     };
   }, [stopCameraStreamOnly]);
 
-  const handleCheckRoom = async (e) => {
-    e.preventDefault();
+  const handleCheckRoom = async (event) => {
+    event.preventDefault();
 
     const keyword = roomName.trim();
 
@@ -302,6 +422,8 @@ export default function CameraRoomPage() {
     setTodaySession(null);
     setClassStudents([]);
     setMessage("");
+
+    autoOpenTriedRef.current = false;
 
     resetRecognitionState();
     stopCamera();
@@ -338,7 +460,12 @@ export default function CameraRoomPage() {
       const status = getCameraStatus(session, new Date());
 
       if (status.canOpen) {
-        showMessage("Đã tìm thấy buổi học hiện tại của phòng.", "success");
+        showMessage(
+          "Đã tìm thấy buổi học hiện tại của phòng. Camera sẽ được mở theo thời gian quy định.",
+          "success"
+        );
+
+        await startCamera(true);
       } else {
         showMessage(
           `Đã tìm thấy lịch học, nhưng ${status.description}`,
@@ -353,78 +480,25 @@ export default function CameraRoomPage() {
     }
   };
 
-  const startCamera = async () => {
-    const session = todaySessionRef.current;
-    const room = roomInfoRef.current;
-
-    if (!room) {
-      showMessage("Vui lòng kiểm tra phòng trước khi bật camera.", "warning");
-      return;
-    }
-
-    if (!session) {
-      showMessage("Phòng hiện chưa có buổi học hôm nay.", "warning");
-      return;
-    }
-
-    const status = getCameraStatus(session, new Date());
-
-    if (!status.canOpen) {
-      showMessage(status.description, "warning");
-      return;
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showMessage("Trình duyệt hiện tại không hỗ trợ mở camera.", "error");
-      return;
-    }
-
-    setCameraLoading(true);
-    setMessage("");
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "user",
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      resetRecognitionState();
-
-      cameraActiveRef.current = true;
-      setCameraActive(true);
-
-      showMessage(
-        "Camera đã được bật. Khi nhận diện đúng, sinh viên cần bấm OK để xác nhận điểm danh.",
-        "success"
-      );
-    } catch (error) {
-      console.error("Lỗi mở camera:", error);
-
-      showMessage(
-        "Không thể mở camera. Vui lòng cho phép trình duyệt truy cập camera.",
-        "error"
-      );
-    } finally {
-      setCameraLoading(false);
-    }
-  };
-
   const handleConfirmAttendance = async (face) => {
     const session = todaySessionRef.current;
     const room = roomInfoRef.current;
 
     if (!session?.id_session) {
       showMessage("Không tìm thấy buổi học hiện tại.", "error");
+      return;
+    }
+
+    const cameraStatusNow = getCameraStatus(session, new Date());
+
+    if (!cameraStatusNow.canOpen) {
+      stopCamera();
+
+      showMessage(
+        "Camera đã đóng theo thời gian quy định. Không thể xác nhận điểm danh.",
+        "warning"
+      );
+
       return;
     }
 
@@ -466,6 +540,8 @@ export default function CameraRoomPage() {
       return;
     }
 
+    const expectedStatus = getAttendanceStatusBySessionTime(session, new Date());
+
     setConfirmingStudentCode(face.student_code);
 
     try {
@@ -475,9 +551,20 @@ export default function CameraRoomPage() {
         confidence: face.confidence,
         faceImage: face.imageBase64,
         cameraId: getCameraId(room),
+        expectedStatus,
       });
 
-      showMessage(data?.message || "Đã lưu điểm danh thành công", "success");
+      const savedStatus = normalizeSavedAttendanceStatus(
+        data?.status,
+        expectedStatus
+      );
+
+      showMessage(
+        savedStatus === "LATE"
+          ? "Đã lưu điểm danh đi trễ"
+          : data?.message || "Đã lưu điểm danh thành công",
+        "success"
+      );
 
       setPendingFace(null);
 
@@ -486,15 +573,33 @@ export default function CameraRoomPage() {
           item.student_code === face.student_code
             ? {
                 ...item,
-                status: data?.status || "ATTENDANCE_CONFIRMED",
+                status: savedStatus,
                 result: "SUCCESS",
-                message: "Đã lưu điểm danh vào MySQL.",
+                message:
+                  savedStatus === "LATE"
+                    ? "Đã lưu điểm danh đi trễ vào MySQL."
+                    : "Đã lưu điểm danh vào MySQL.",
               }
             : item
         )
       );
 
       await refreshClassStudents(session.id_session);
+
+      setClassStudents((prev) =>
+        prev.map((student) =>
+          String(student.student_code) === String(face.student_code) ||
+          Number(student.id_student) === Number(face.id_student)
+            ? {
+                ...student,
+                display_status: savedStatus,
+                attendance_status: savedStatus,
+                status: savedStatus,
+                check_in_time: new Date().toISOString(),
+              }
+            : student
+        )
+      );
     } catch (error) {
       console.error("Lỗi lưu điểm danh:", error);
       showMessage(error.message || "Không thể lưu điểm danh.", "error");
@@ -527,9 +632,10 @@ export default function CameraRoomPage() {
               </h1>
 
               <p className="mt-2 max-w-3xl text-sm text-blue-50">
-                Nhập tên phòng hoặc mã phòng để kiểm tra lịch học hôm nay. Khi
-                AI nhận diện đúng, hệ thống hiển thị tên và mã sinh viên. Sinh
-                viên bấm OK thì hệ thống mới lưu điểm danh vào MySQL.
+                Nhập tên phòng hoặc mã phòng để kiểm tra lịch học hôm nay. Camera
+                sẽ mở trước giờ học 15 phút và đóng trước khi kết thúc 15 phút.
+                Khi AI nhận diện đúng, sinh viên bấm OK thì hệ thống mới lưu
+                điểm danh vào MySQL.
               </p>
             </div>
 
@@ -562,7 +668,7 @@ export default function CameraRoomPage() {
 
                   <input
                     value={roomName}
-                    onChange={(e) => setRoomName(e.target.value)}
+                    onChange={(event) => setRoomName(event.target.value)}
                     placeholder="Ví dụ: A101, PM01, Phòng máy 1..."
                     className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                   />
@@ -671,13 +777,25 @@ export default function CameraRoomPage() {
 
                     <MiniCard
                       icon="videocam"
-                      label="Camera bật"
-                      value={formatTime(todaySession.start_time)}
+                      label="Camera mở"
+                      value={formatOpenTime(
+                        todaySession.session_date,
+                        todaySession.start_time
+                      )}
+                    />
+
+                    <MiniCard
+                      icon="schedule"
+                      label="Tính đi trễ từ"
+                      value={formatLateTime(
+                        todaySession.session_date,
+                        todaySession.start_time
+                      )}
                     />
 
                     <MiniCard
                       icon="lock_clock"
-                      label="Khóa điểm danh"
+                      label="Camera đóng"
                       value={formatCloseTime(
                         todaySession.session_date,
                         todaySession.end_time
@@ -761,8 +879,30 @@ export default function CameraRoomPage() {
                           {formatTime(todaySession.start_time)} -{" "}
                           {formatTime(todaySession.end_time)}
                         </span>
+
                         <span className="mx-2 text-slate-500">|</span>
-                        Khóa điểm danh lúc{" "}
+
+                        Camera mở lúc{" "}
+                        <span className="font-bold text-white">
+                          {formatOpenTime(
+                            todaySession.session_date,
+                            todaySession.start_time
+                          )}
+                        </span>
+
+                        <span className="mx-2 text-slate-500">|</span>
+
+                        Đi trễ từ{" "}
+                        <span className="font-bold text-white">
+                          {formatLateTime(
+                            todaySession.session_date,
+                            todaySession.start_time
+                          )}
+                        </span>
+
+                        <span className="mx-2 text-slate-500">|</span>
+
+                        Camera đóng lúc{" "}
                         <span className="font-bold text-white">
                           {formatCloseTime(
                             todaySession.session_date,
@@ -778,7 +918,7 @@ export default function CameraRoomPage() {
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <button
                       type="button"
-                      onClick={startCamera}
+                      onClick={() => startCamera(false)}
                       disabled={cameraLoading || cameraActive}
                       className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-600"
                     >
@@ -843,6 +983,10 @@ export default function CameraRoomPage() {
   );
 }
 
+/* =========================================================
+   API FUNCTIONS
+========================================================= */
+
 async function checkRoom(roomName) {
   const res = await fetch(
     `${API_URL}/cameras/room/check?roomName=${encodeURIComponent(roomName)}`
@@ -867,12 +1011,30 @@ async function getSessionStudents(idSession) {
   return handleResponse(res, "Không thể tải danh sách sinh viên trong lớp");
 }
 
+async function recognizeFace({ imageBase64, idSession, cameraId }) {
+  const res = await fetch(FACE_RECOGNIZE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      image: imageBase64,
+      image_base64: imageBase64,
+      id_session: Number(idSession),
+      camera_id: cameraId || null,
+    }),
+  });
+
+  return handleResponse(res, "Không thể nhận diện khuôn mặt");
+}
+
 async function saveFaceAttendance({
   idSession,
   studentCode,
   confidence,
   faceImage,
   cameraId,
+  expectedStatus,
 }) {
   const res = await fetch(`${API_URL}/attendance/face-confirm`, {
     method: "POST",
@@ -885,24 +1047,17 @@ async function saveFaceAttendance({
       confidence: Number(confidence || 0),
       face_image: faceImage || null,
       camera_id: cameraId || null,
+
+      /*
+        Gửi thêm để backend có thể tham khảo.
+        Backend Express nên tự tính lại theo session.start_time để an toàn.
+      */
+      expected_status: expectedStatus,
+      client_check_time: new Date().toISOString(),
     }),
   });
 
   return handleResponse(res, "Không thể lưu điểm danh");
-}
-
-async function recognizeFace(imageBase64) {
-  const res = await fetch(FACE_RECOGNIZE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      image: imageBase64,
-    }),
-  });
-
-  return handleResponse(res, "Không thể nhận diện khuôn mặt");
 }
 
 async function handleResponse(res, defaultMessage) {
@@ -930,25 +1085,38 @@ async function handleResponse(res, defaultMessage) {
   return data;
 }
 
+/* =========================================================
+   FACE HELPERS
+========================================================= */
+
 function normalizeFaces(faces) {
   if (!Array.isArray(faces)) return [];
 
   return faces.map((face) => {
     const parsed = parseFaceLabel(face.label);
 
+    const rawStatus = face.status || "";
     const isUnknown =
+      rawStatus === "LOW_CONFIDENCE" ||
+      rawStatus === "UNKNOWN" ||
       !face.label ||
       face.label === "Unknown" ||
       parsed.code === "Không xác định";
 
+    const studentCode =
+      face.student_code ?? face.code ?? parsed.code ?? face.label ?? "";
+
+    const fullName =
+      face.full_name ?? face.student_name ?? face.name ?? parsed.name ?? "";
+
     return {
       ...face,
       id_student: face.id_student ?? face.student_id ?? null,
-      student_code: face.student_code ?? face.code ?? parsed.code,
-      full_name: face.full_name ?? face.student_name ?? face.name ?? parsed.name,
+      student_code: studentCode,
+      full_name: fullName,
       confidence: Number(face.confidence || 0),
-      status: isUnknown ? "UNKNOWN" : "WAITING_CONFIRM",
-      result: isUnknown ? "FAILED" : "SUCCESS",
+      status: isUnknown ? "UNKNOWN" : rawStatus || "WAITING_CONFIRM",
+      result: isUnknown ? "FAILED" : face.result || "SUCCESS",
     };
   });
 }
@@ -961,11 +1129,12 @@ function parseFaceLabel(label) {
     };
   }
 
-  const parts = String(label).split("_");
+  const text = String(label).trim();
+  const parts = text.split("_");
 
   return {
     code: parts[0] || "Không xác định",
-    name: parts.slice(1).join(" ") || String(label),
+    name: parts.length > 1 ? parts.slice(1).join(" ") : text,
   };
 }
 
@@ -995,6 +1164,10 @@ function isStudentInClass(face, students) {
   });
 }
 
+/* =========================================================
+   CAMERA TIME LOGIC
+========================================================= */
+
 function getCameraStatus(session, now = new Date()) {
   if (!session) {
     return {
@@ -1019,50 +1192,131 @@ function getCameraStatus(session, now = new Date()) {
     };
   }
 
-  const closeBeforeEnd = new Date(
-    endDateTime.getTime() - LOCK_BEFORE_END_MINUTES * 60 * 1000
+  const cameraOpenTime = new Date(
+    startDateTime.getTime() - OPEN_BEFORE_START_MINUTES * 60 * 1000
   );
 
-  if (now < startDateTime) {
+  const lateTime = new Date(
+    startDateTime.getTime() + LATE_AFTER_START_MINUTES * 60 * 1000
+  );
+
+  const cameraCloseTime = new Date(
+    endDateTime.getTime() - CLOSE_BEFORE_END_MINUTES * 60 * 1000
+  );
+
+  if (now < cameraOpenTime) {
     return {
       canOpen: false,
       type: "waiting",
-      label: "Chưa đến giờ học",
-      description: `Theo lịch, camera sẽ được mở từ ${formatTime(
-        session.start_time
+      label: "Chưa đến giờ mở camera",
+      description: `Camera sẽ tự động được phép mở từ ${formatOnlyTime(
+        cameraOpenTime
       )}.`,
+      cameraOpenTime,
+      lateTime,
+      cameraCloseTime,
     };
   }
 
-  if (now >= startDateTime && now <= closeBeforeEnd) {
+  if (now >= cameraOpenTime && now < startDateTime) {
+    return {
+      canOpen: true,
+      type: "pre_open",
+      label: "Camera đã được phép mở sớm",
+      description: `Camera đang mở sớm trước giờ học. Giờ học bắt đầu lúc ${formatOnlyTime(
+        startDateTime
+      )}.`,
+      cameraOpenTime,
+      lateTime,
+      cameraCloseTime,
+    };
+  }
+
+  if (now >= startDateTime && now < lateTime) {
     return {
       canOpen: true,
       type: "active",
-      label: "Đang trong giờ điểm danh",
-      description: `Camera được phép hoạt động từ ${formatTime(
-        session.start_time
-      )} đến ${formatOnlyTime(closeBeforeEnd)}.`,
+      label: "Đang trong giờ điểm danh đúng giờ",
+      description: `Sinh viên điểm danh trước ${formatOnlyTime(
+        lateTime
+      )} sẽ được tính là có mặt đúng giờ.`,
+      cameraOpenTime,
+      lateTime,
+      cameraCloseTime,
     };
   }
 
-  if (now > closeBeforeEnd && now <= endDateTime) {
+  if (now >= lateTime && now < cameraCloseTime) {
     return {
       canOpen: true,
+      type: "late",
+      label: "Đang trong giờ điểm danh đi trễ",
+      description: `Sinh viên điểm danh từ ${formatOnlyTime(
+        lateTime
+      )} sẽ được tính là đi trễ.`,
+      cameraOpenTime,
+      lateTime,
+      cameraCloseTime,
+    };
+  }
+
+  if (now >= cameraCloseTime && now <= endDateTime) {
+    return {
+      canOpen: false,
       type: "locked",
-      label: "Chế độ demo",
-      description:
-        "Theo lịch đã khóa điểm danh, nhưng chế độ demo vẫn cho phép bật camera.",
+      label: "Camera đã tự động đóng",
+      description: `Camera đã đóng lúc ${formatOnlyTime(
+        cameraCloseTime
+      )}, trước khi kết thúc buổi học 15 phút.`,
+      cameraOpenTime,
+      lateTime,
+      cameraCloseTime,
     };
   }
 
   return {
-    canOpen: true,
+    canOpen: false,
     type: "finished",
-    label: "Chế độ demo",
+    label: "Buổi học đã kết thúc",
     description:
-      "Buổi học đã kết thúc theo lịch, nhưng chế độ demo vẫn cho phép bật camera.",
+      "Buổi học đã kết thúc. Camera không còn được phép mở để điểm danh.",
+    cameraOpenTime,
+    lateTime,
+    cameraCloseTime,
   };
 }
+
+function getAttendanceStatusBySessionTime(session, now = new Date()) {
+  const startDateTime = buildDateTime(session?.session_date, session?.start_time);
+
+  if (!isValidDate(startDateTime)) return "PRESENT";
+
+  const lateTime = new Date(
+    startDateTime.getTime() + LATE_AFTER_START_MINUTES * 60 * 1000
+  );
+
+  return now >= lateTime ? "LATE" : "PRESENT";
+}
+
+function normalizeSavedAttendanceStatus(serverStatus, expectedStatus) {
+  const status = String(serverStatus || "").toUpperCase();
+
+  if (status === "LATE") return "LATE";
+  if (status === "PRESENT") return "PRESENT";
+  if (status === "ABSENT") return "ABSENT";
+
+  /*
+    Nếu backend cũ trả ATTENDANCE_CONFIRMED thì frontend vẫn hiển thị đúng
+    theo thời gian hiện tại.
+  */
+  if (expectedStatus === "LATE") return "LATE";
+
+  return "PRESENT";
+}
+
+/* =========================================================
+   UI COMPONENTS
+========================================================= */
 
 function Section({ title, icon, children }) {
   return (
@@ -1073,6 +1327,7 @@ function Section({ title, icon, children }) {
         </span>
         <h2 className="text-lg font-bold text-slate-900">{title}</h2>
       </div>
+
       {children}
     </div>
   );
@@ -1082,6 +1337,7 @@ function InfoRow({ label, value }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-2xl bg-slate-50 px-4 py-3">
       <span className="text-sm font-semibold text-slate-500">{label}</span>
+
       <span className="text-right text-sm font-bold text-slate-900">
         {value}
       </span>
@@ -1093,7 +1349,9 @@ function MiniCard({ icon, label, value }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <span className="material-symbols-outlined text-blue-600">{icon}</span>
+
       <p className="mt-2 text-xs font-bold text-slate-500">{label}</p>
+
       <p className="mt-1 text-lg font-bold text-slate-900">{value}</p>
     </div>
   );
@@ -1105,7 +1363,9 @@ function EmptyState({ icon, title, description }) {
       <span className="material-symbols-outlined text-5xl text-slate-400">
         {icon}
       </span>
+
       <h3 className="mt-3 text-sm font-bold text-slate-800">{title}</h3>
+
       <p className="mt-1 max-w-xs text-xs text-slate-500">{description}</p>
     </div>
   );
@@ -1135,6 +1395,7 @@ function MessageBox({ type, message }) {
       <span className="material-symbols-outlined text-[20px]">
         {icons[type] || icons.info}
       </span>
+
       {message}
     </div>
   );
@@ -1143,6 +1404,8 @@ function MessageBox({ type, message }) {
 function StatusBox({ status }) {
   const styles = {
     active: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    pre_open: "border-blue-200 bg-blue-50 text-blue-700",
+    late: "border-amber-200 bg-amber-50 text-amber-700",
     waiting: "border-blue-200 bg-blue-50 text-blue-700",
     locked: "border-amber-200 bg-amber-50 text-amber-700",
     finished: "border-slate-200 bg-slate-50 text-slate-700",
@@ -1152,6 +1415,8 @@ function StatusBox({ status }) {
 
   const icons = {
     active: "radio_button_checked",
+    pre_open: "videocam",
+    late: "schedule",
     waiting: "schedule",
     locked: "lock",
     finished: "event_busy",
@@ -1169,8 +1434,10 @@ function StatusBox({ status }) {
         <span className="material-symbols-outlined text-[20px]">
           {icons[status.type] || icons.empty}
         </span>
+
         {status.label}
       </div>
+
       <p className="mt-1 text-xs font-semibold opacity-80">
         {status.description}
       </p>
@@ -1184,12 +1451,24 @@ function PendingConfirmPanel({
   onCancel,
   confirmingStudentCode,
 }) {
+  const expectedStatus = face.expectedStatus || "PRESENT";
+
   return (
     <Section title="Xác nhận điểm danh" icon="verified_user">
-      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
+      <div
+        className={`rounded-3xl border p-5 ${
+          expectedStatus === "LATE"
+            ? "border-amber-200 bg-amber-50"
+            : "border-emerald-200 bg-emerald-50"
+        }`}
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
+            <p
+              className={`text-xs font-bold uppercase tracking-wide ${
+                expectedStatus === "LATE" ? "text-amber-700" : "text-emerald-700"
+              }`}
+            >
               Đã nhận diện sinh viên
             </p>
 
@@ -1205,9 +1484,16 @@ function PendingConfirmPanel({
               Độ tin cậy: {(Number(face.confidence || 0) * 100).toFixed(1)}%
             </p>
 
-            <p className="mt-3 text-sm text-slate-600">
-              Sinh viên kiểm tra thông tin. Nếu đúng, bấm OK để lưu điểm danh.
-              Nếu sai, bấm Hủy để tiếp tục nhận diện.
+            <p
+              className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold ${
+                expectedStatus === "LATE"
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              {expectedStatus === "LATE"
+                ? "Nếu bấm OK lúc này sẽ lưu là ĐI TRỄ"
+                : "Nếu bấm OK lúc này sẽ lưu là CÓ MẶT"}
             </p>
           </div>
 
@@ -1216,7 +1502,11 @@ function PendingConfirmPanel({
               type="button"
               onClick={() => onConfirm(face)}
               disabled={confirmingStudentCode === face.student_code}
-              className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+              className={`rounded-2xl px-5 py-3 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:bg-slate-400 ${
+                expectedStatus === "LATE"
+                  ? "bg-amber-600 hover:bg-amber-700"
+                  : "bg-emerald-600 hover:bg-emerald-700"
+              }`}
             >
               {confirmingStudentCode === face.student_code
                 ? "Đang lưu..."
@@ -1252,6 +1542,7 @@ function RecognitionResultPanel({
           <h3 className="text-base font-bold text-slate-900">
             Danh sách khuôn mặt phát hiện
           </h3>
+
           <p className="mt-1 text-xs font-semibold text-slate-500">
             {lastRecognizedAt
               ? `Cập nhật lúc ${lastRecognizedAt.toLocaleTimeString("vi-VN")}`
@@ -1269,6 +1560,7 @@ function RecognitionResultPanel({
           <span className="material-symbols-outlined text-[16px]">
             {recognizing ? "sync" : "check_circle"}
           </span>
+
           {recognizing ? "Đang nhận diện..." : "Sẵn sàng"}
         </span>
       </div>
@@ -1278,9 +1570,11 @@ function RecognitionResultPanel({
           <span className="material-symbols-outlined text-5xl text-slate-400">
             face
           </span>
+
           <p className="mt-3 text-sm font-bold text-slate-700">
             Chưa phát hiện khuôn mặt
           </p>
+
           <p className="mt-1 text-xs text-slate-500">
             Khi camera phát hiện khuôn mặt, kết quả sẽ hiển thị tại đây.
           </p>
@@ -1289,11 +1583,15 @@ function RecognitionResultPanel({
         <div className="space-y-3">
           {results.map((face, index) => {
             const confidence = Number(face.confidence || 0);
+
             const isWaiting = face.status === "WAITING_CONFIRM";
-            const isConfirmed =
-              face.status === "ATTENDANCE_CONFIRMED" ||
+            const isLate = face.status === "LATE";
+            const isPresent =
               face.status === "PRESENT" ||
-              face.status === "LATE";
+              face.status === "ATTENDANCE_CONFIRMED" ||
+              face.status === "ATTENDANCE_SAVED";
+
+            const isConfirmed = isPresent || isLate;
             const isBlocked = face.status === "NOT_IN_SESSION";
             const isSuccess = isWaiting || isConfirmed;
 
@@ -1305,19 +1603,23 @@ function RecognitionResultPanel({
                 <div className="flex items-center gap-3">
                   <div
                     className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
-                      isSuccess
-                        ? "bg-emerald-50 text-emerald-600"
-                        : isBlocked
-                          ? "bg-amber-50 text-amber-600"
-                          : "bg-red-50 text-red-600"
+                      isLate
+                        ? "bg-amber-50 text-amber-600"
+                        : isSuccess
+                          ? "bg-emerald-50 text-emerald-600"
+                          : isBlocked
+                            ? "bg-amber-50 text-amber-600"
+                            : "bg-red-50 text-red-600"
                     }`}
                   >
                     <span className="material-symbols-outlined">
-                      {isSuccess
-                        ? "person_check"
-                        : isBlocked
-                          ? "block"
-                          : "person_off"}
+                      {isLate
+                        ? "schedule"
+                        : isSuccess
+                          ? "person_check"
+                          : isBlocked
+                            ? "block"
+                            : "person_off"}
                     </span>
                   </div>
 
@@ -1325,12 +1627,15 @@ function RecognitionResultPanel({
                     <p className="font-bold text-slate-900">
                       {face.full_name || "Không xác định"}
                     </p>
+
                     <p className="mt-1 text-xs font-semibold text-slate-500">
                       Mã SV: {face.student_code || "Không xác định"}
                     </p>
+
                     <p className="mt-1 text-xs font-semibold text-slate-500">
                       Trạng thái: {translateFaceStatus(face.status)}
                     </p>
+
                     {face.message && (
                       <p className="mt-1 text-xs font-medium text-slate-500">
                         {face.message}
@@ -1342,22 +1647,26 @@ function RecognitionResultPanel({
                 <div className="flex items-center justify-between gap-3 sm:flex-col sm:items-end">
                   <span
                     className={`rounded-full px-3 py-1 text-xs font-bold ${
-                      isConfirmed
-                        ? "bg-emerald-100 text-emerald-700"
-                        : isWaiting
-                          ? "bg-blue-100 text-blue-700"
-                          : isBlocked
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-red-100 text-red-700"
+                      isLate
+                        ? "bg-amber-100 text-amber-700"
+                        : isPresent
+                          ? "bg-emerald-100 text-emerald-700"
+                          : isWaiting
+                            ? "bg-blue-100 text-blue-700"
+                            : isBlocked
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-red-100 text-red-700"
                     }`}
                   >
-                    {isConfirmed
-                      ? "Đã điểm danh"
-                      : isWaiting
-                        ? "Chờ xác nhận"
-                        : isBlocked
-                          ? "Không học lớp này"
-                          : "Chưa hợp lệ"}
+                    {isLate
+                      ? "Đi trễ"
+                      : isPresent
+                        ? "Đã điểm danh"
+                        : isWaiting
+                          ? "Chờ xác nhận"
+                          : isBlocked
+                            ? "Không học lớp này"
+                            : "Chưa hợp lệ"}
                   </span>
 
                   <span className="text-sm font-bold text-slate-700">
@@ -1423,7 +1732,13 @@ function ClassStudentAttendancePanel({ students }) {
                 </div>
 
                 <div className="col-span-2 text-right">
-                  <AttendanceBadge status={student.display_status} />
+                  <AttendanceBadge
+                    status={
+                      student.display_status ||
+                      student.attendance_status ||
+                      student.status
+                    }
+                  />
                 </div>
               </div>
             ))}
@@ -1435,6 +1750,8 @@ function ClassStudentAttendancePanel({ students }) {
 }
 
 function AttendanceBadge({ status }) {
+  const normalizedStatus = String(status || "NOT_MARKED").toUpperCase();
+
   const config = {
     PRESENT: {
       label: "Đã điểm danh",
@@ -1454,7 +1771,7 @@ function AttendanceBadge({ status }) {
     },
   };
 
-  const item = config[status] || config.NOT_MARKED;
+  const item = config[normalizedStatus] || config.NOT_MARKED;
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-bold ${item.className}`}>
@@ -1463,8 +1780,35 @@ function AttendanceBadge({ status }) {
   );
 }
 
+/* =========================================================
+   FORMAT HELPERS
+========================================================= */
+
+function normalizeDateOnly(value) {
+  if (!value) return "";
+
+  const text = String(value);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+
+  const date = new Date(text);
+
+  if (!isValidDate(date)) {
+    return text.slice(0, 10);
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function buildDateTime(dateString, timeString) {
-  const safeDate = String(dateString || "").slice(0, 10);
+  const safeDate = normalizeDateOnly(dateString);
   const safeTime = String(timeString || "00:00:00").slice(0, 8);
 
   if (!safeDate) return new Date("Invalid Date");
@@ -1493,11 +1837,37 @@ function formatOnlyTime(date) {
 function formatDate(dateString) {
   if (!dateString) return "—";
 
-  const date = new Date(String(dateString).slice(0, 10));
+  const safeDate = normalizeDateOnly(dateString);
 
-  if (!isValidDate(date)) return "—";
+  if (!safeDate) return "—";
 
-  return date.toLocaleDateString("vi-VN");
+  const [year, month, day] = safeDate.split("-");
+
+  return `${day}/${month}/${year}`;
+}
+
+function formatOpenTime(sessionDate, startTime) {
+  const startDateTime = buildDateTime(sessionDate, startTime);
+
+  if (!isValidDate(startDateTime)) return "—";
+
+  const openTime = new Date(
+    startDateTime.getTime() - OPEN_BEFORE_START_MINUTES * 60 * 1000
+  );
+
+  return formatOnlyTime(openTime);
+}
+
+function formatLateTime(sessionDate, startTime) {
+  const startDateTime = buildDateTime(sessionDate, startTime);
+
+  if (!isValidDate(startDateTime)) return "—";
+
+  const lateTime = new Date(
+    startDateTime.getTime() + LATE_AFTER_START_MINUTES * 60 * 1000
+  );
+
+  return formatOnlyTime(lateTime);
 }
 
 function formatCloseTime(sessionDate, endTime) {
@@ -1506,7 +1876,7 @@ function formatCloseTime(sessionDate, endTime) {
   if (!isValidDate(endDateTime)) return "—";
 
   const closeTime = new Date(
-    endDateTime.getTime() - LOCK_BEFORE_END_MINUTES * 60 * 1000
+    endDateTime.getTime() - CLOSE_BEFORE_END_MINUTES * 60 * 1000
   );
 
   return formatOnlyTime(closeTime);
@@ -1534,6 +1904,7 @@ function formatDay(value) {
     FRIDAY: "Thứ 6",
     SATURDAY: "Thứ 7",
     SUNDAY: "Chủ nhật",
+
     Monday: "Thứ 2",
     Tuesday: "Thứ 3",
     Wednesday: "Thứ 4",
@@ -1541,6 +1912,9 @@ function formatDay(value) {
     Friday: "Thứ 6",
     Saturday: "Thứ 7",
     Sunday: "Chủ nhật",
+
+    0: "Chủ nhật",
+    1: "Thứ 2",
     2: "Thứ 2",
     3: "Thứ 3",
     4: "Thứ 4",
@@ -1548,8 +1922,6 @@ function formatDay(value) {
     6: "Thứ 6",
     7: "Thứ 7",
     8: "Chủ nhật",
-    0: "Chủ nhật",
-    1: "Thứ 2",
   };
 
   if (value === null || value === undefined || value === "") return "—";
@@ -1566,6 +1938,8 @@ function translateFaceStatus(status) {
     ATTENDANCE_SAVED: "Đã lưu điểm danh",
     PRESENT: "Đã điểm danh",
     LATE: "Đi trễ",
+    ABSENT: "Vắng",
+    COOLDOWN: "Đã điểm danh gần đây",
     LOW_CONFIDENCE: "Độ tin cậy thấp",
     NOT_IN_SESSION: "Không học lớp này",
     STUDENT_NOT_FOUND: "Không tìm thấy sinh viên",

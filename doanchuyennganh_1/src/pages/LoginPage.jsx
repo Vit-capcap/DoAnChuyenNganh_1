@@ -165,7 +165,7 @@ export default function LoginPage() {
 
   const fillDemoTeacher = () => {
     setForm({
-      username: "kienht.gv.ai@vku.udn.vn",
+      username: "kietlt@vku.udn.vn",
       password: "12345678",
       role: "TEACHER",
     });
@@ -175,7 +175,7 @@ export default function LoginPage() {
 
   const fillDemoStudent = () => {
     setForm({
-      username: "22AI688",
+      username: "hoangnq.23it@vku.udn.vn",
       password: "123456",
       role: "STUDENT",
     });
@@ -655,7 +655,7 @@ export default function LoginPage() {
 
             <p className="mt-3 text-xs leading-relaxed text-slate-500">
               Admin: admin / admin123. Giảng viên:
-              kienht.gv.ai@vku.udn.vn / 123456. Sinh viên: 22AI688 / 123456.
+              kietlt@vku.udn.vn / 123456. Sinh viên: hoangnq.23it@vku.udn.vn / 123456.
             </p>
           </div>
 

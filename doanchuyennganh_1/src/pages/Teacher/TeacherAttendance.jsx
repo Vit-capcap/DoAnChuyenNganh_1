@@ -15,6 +15,10 @@ import {
 
 const ATTENDANCE_CLOSE_BEFORE_END_MINUTES = 15;
 
+/* =========================================================
+   HELPER: LẤY THÔNG TIN GIÁO VIÊN
+========================================================= */
+
 function getTeacherId() {
   try {
     const account = JSON.parse(localStorage.getItem("account") || "{}");
@@ -69,24 +73,31 @@ function getInitials(name = "?") {
     .toUpperCase();
 }
 
-function formatTime(value) {
-  if (!value) return "--:--";
+/* =========================================================
+   HELPER: NGÀY GIỜ
+========================================================= */
 
-  return String(value).slice(0, 5);
-}
+function normalizeDateOnly(value) {
+  if (!value) return "";
 
-function formatDate(value) {
-  if (!value) return "Chưa có ngày";
+  const text = String(value).trim();
 
-  try {
-    return new Date(value).toLocaleDateString("vi-VN");
-  } catch {
-    return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
   }
-}
 
-function getCurrentTime() {
-  return new Date().toTimeString().slice(0, 8);
+  const date = new Date(text);
+
+  if (Number.isNaN(date.getTime())) {
+    return text.slice(0, 10);
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function padTime(value) {
@@ -100,11 +111,32 @@ function padTime(value) {
   return raw.slice(0, 8);
 }
 
+function formatTime(value) {
+  if (!value) return "--:--";
+  return String(value).slice(0, 5);
+}
+
+function formatDate(value) {
+  if (!value) return "Chưa có ngày";
+
+  const safeDate = normalizeDateOnly(value);
+
+  if (!safeDate) return "Chưa có ngày";
+
+  const [year, month, day] = safeDate.split("-");
+
+  if (!year || !month || !day) return safeDate;
+
+  return `${day}/${month}/${year}`;
+}
+
 function buildDateTime(dateValue, timeValue) {
   if (!dateValue || !timeValue) return null;
 
-  const date = String(dateValue).slice(0, 10);
+  const date = normalizeDateOnly(dateValue);
   const time = padTime(timeValue);
+
+  if (!date || !time) return null;
 
   const result = new Date(`${date}T${time}`);
 
@@ -118,6 +150,7 @@ function formatDateTimeText(value) {
 
   try {
     return value.toLocaleString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
       hour: "2-digit",
       minute: "2-digit",
       day: "2-digit",
@@ -130,7 +163,7 @@ function formatDateTimeText(value) {
 }
 
 function formatDuration(ms) {
-  if (ms <= 0) return "00:00";
+  if (ms <= 0) return "00 phút";
 
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -153,16 +186,97 @@ function formatCheckInTime(value) {
 
   const raw = String(value);
 
+  if (!raw.includes("T")) {
+    return {
+      time: raw.slice(0, 8),
+      source: "Manual / Face ID",
+    };
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return {
+      time: "--:--:--",
+      source: "Manual / Face ID",
+    };
+  }
+
   return {
-    time: raw.includes("T")
-      ? new Date(value).toLocaleTimeString("vi-VN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      : raw.slice(0, 8),
+    time: date.toLocaleTimeString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }),
     source: "Manual / Face ID",
   };
+}
+
+function getCurrentTime() {
+  return new Date().toTimeString().slice(0, 8);
+}
+
+/*
+  QUY TẮC ĐIỂM DANH THỦ CÔNG:
+
+  Vắng / Có mặt / Đi trễ đều được chuyển qua lại.
+
+  - Chuyển sang PRESENT:
+    check_in_time = giờ bắt đầu buổi học.
+
+  - Chuyển sang LATE:
+    check_in_time = giờ hiện tại.
+
+  - Chuyển sang ABSENT:
+    check_in_time = null.
+*/
+function getManualCheckInTimeByStatus(status, session) {
+  if (status === "PRESENT") {
+    return padTime(session?.startTime) || getCurrentTime();
+  }
+
+  if (status === "LATE") {
+    return getCurrentTime();
+  }
+
+  return null;
+}
+
+function getManualMethodByStatus(status) {
+  if (status === "PRESENT") return "Manual - sửa lỗi hệ thống";
+  if (status === "LATE") return "Manual - đi trễ";
+  return "Manual - vắng";
+}
+
+function getManualNoteByStatus(status) {
+  if (status === "PRESENT") {
+    return "Giáo viên chỉnh thủ công: có mặt do lỗi hệ thống";
+  }
+
+  if (status === "LATE") {
+    return "Giáo viên chỉnh thủ công: đi trễ";
+  }
+
+  if (status === "ABSENT") {
+    return "Giáo viên chỉnh thủ công: vắng";
+  }
+
+  return null;
+}
+
+/* =========================================================
+   HELPER: TRẠNG THÁI
+========================================================= */
+
+function normalizeAttendanceStatus(status) {
+  const value = String(status || "").toUpperCase();
+
+  if (["PRESENT", "LATE", "ABSENT"].includes(value)) {
+    return value;
+  }
+
+  return "ABSENT";
 }
 
 function getStatusConfig(status) {
@@ -194,6 +308,10 @@ function getStatusConfig(status) {
   };
 }
 
+/* =========================================================
+   HELPER: NORMALIZE DATA
+========================================================= */
+
 function normalizeSession(data = {}) {
   const raw =
     data?.session ||
@@ -206,7 +324,7 @@ function normalizeSession(data = {}) {
   return {
     idSession: raw.id_session || raw.idSession || raw.id || "",
     idSchedule: raw.id_schedule || raw.idSchedule || "",
-    sessionDate: raw.session_date || raw.sessionDate || "",
+    sessionDate: normalizeDateOnly(raw.session_date || raw.sessionDate || ""),
     sessionNumber: raw.session_number || raw.sessionNumber || "",
     sessionStatus: raw.status || raw.session_status || "NOT_STARTED",
 
@@ -222,14 +340,14 @@ function normalizeSession(data = {}) {
 function normalizeAttendance(item = {}) {
   return {
     idAttendance:
-      item.id_attendance || item.attendance_id || item.idAttendance || item.id,
-    idStudent: item.id_student || item.student_id || item.idStudent,
+      item.id_attendance || item.attendance_id || item.idAttendance || item.id || null,
+    idStudent: item.id_student || item.student_id || item.idStudent || null,
     studentCode: item.student_code || item.studentCode || "N/A",
     fullName: item.full_name || item.fullName || "Chưa có tên",
     email: item.email || "",
     avatar: item.avatar || "",
     className: item.class_name || item.className || "",
-    status: item.status || item.attendance_status || "ABSENT",
+    status: normalizeAttendanceStatus(item.status || item.attendance_status),
     checkInTime: item.check_in_time || item.checkInTime || "",
     note: item.note || item.attendance_note || "",
     method: item.method || item.recognition_method || "",
@@ -242,12 +360,18 @@ function normalizeSessionOption(item = {}) {
     idSchedule: item.id_schedule || item.idSchedule || "",
     subjectName: item.subject_name || item.subjectName || "Chưa có môn học",
     classCode: item.class_code || item.classCode || "Chưa có lớp",
-    sessionDate: item.session_date || item.sessionDate || item.start_date || "",
+    sessionDate: normalizeDateOnly(
+      item.session_date || item.sessionDate || item.start_date || ""
+    ),
     startTime: item.start_time || item.startTime || "",
     endTime: item.end_time || item.endTime || "",
     roomName: item.room_name || item.roomName || item.room_code || "",
   };
 }
+
+/* =========================================================
+   HELPER: QUYỀN SỬA ĐIỂM DANH
+========================================================= */
 
 function getAttendancePermission(session, now = new Date()) {
   if (!session?.idSession) {
@@ -288,7 +412,8 @@ function getAttendancePermission(session, now = new Date()) {
     return {
       canEdit: false,
       locked: true,
-      reason: "Buổi học đã kết thúc, điểm danh đã bị khóa.",
+      reason:
+        "Buổi học đã được khóa trong hệ thống. Muốn demo lại cần đổi status về ONGOING hoặc NOT_STARTED.",
       phase: "FINISHED",
       closeAt,
       startAt,
@@ -301,12 +426,14 @@ function getAttendancePermission(session, now = new Date()) {
     return {
       canEdit: false,
       locked: true,
-      reason: "Chưa đến giờ học nên chưa thể điểm danh thủ công.",
+      reason: `Chưa đến giờ học. Điểm danh thủ công sẽ tự mở lúc ${formatDateTimeText(
+        startAt
+      )}.`,
       phase: "BEFORE_START",
       closeAt,
       startAt,
       endAt,
-      remainingText: `Bắt đầu sau ${formatDuration(startAt.getTime() - now.getTime())}`,
+      remainingText: `Mở sau ${formatDuration(startAt.getTime() - now.getTime())}`,
     };
   }
 
@@ -314,7 +441,7 @@ function getAttendancePermission(session, now = new Date()) {
     return {
       canEdit: false,
       locked: true,
-      reason: `Đã quá thời gian cho phép. Điểm danh tự khóa trước giờ kết thúc ${ATTENDANCE_CLOSE_BEFORE_END_MINUTES} phút.`,
+      reason: `Đã đến mốc khóa điểm danh. Hệ thống khóa trước giờ kết thúc ${ATTENDANCE_CLOSE_BEFORE_END_MINUTES} phút.`,
       phase: "CLOSED_BY_TIME",
       closeAt,
       startAt,
@@ -326,7 +453,9 @@ function getAttendancePermission(session, now = new Date()) {
   return {
     canEdit: true,
     locked: false,
-    reason: `Đang trong thời gian cho phép điểm danh thủ công. Hệ thống sẽ khóa lúc ${formatDateTimeText(closeAt)}.`,
+    reason: `Đang trong thời gian cho phép điểm danh thủ công. Hệ thống sẽ tự khóa lúc ${formatDateTimeText(
+      closeAt
+    )}.`,
     phase: "OPEN",
     closeAt,
     startAt,
@@ -334,6 +463,10 @@ function getAttendancePermission(session, now = new Date()) {
     remainingText: `Còn ${formatDuration(closeAt.getTime() - now.getTime())}`,
   };
 }
+
+/* =========================================================
+   COMPONENT CON
+========================================================= */
 
 function StatCard({ icon, title, value, tag, iconClass }) {
   return (
@@ -350,6 +483,17 @@ function StatCard({ icon, title, value, tag, iconClass }) {
 
       <p className="text-sm font-semibold text-slate-600">{title}</p>
       <p className="mt-1 text-xs text-slate-400">{tag}</p>
+    </div>
+  );
+}
+
+function InfoMiniCard({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 p-4">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-bold text-slate-800">{value}</p>
     </div>
   );
 }
@@ -373,7 +517,7 @@ function AttendanceLockBanner({ permission }) {
             <p className="text-sm font-black">
               {permission.canEdit
                 ? "Đang mở điểm danh thủ công"
-                : "Điểm danh đã bị khóa"}
+                : "Điểm danh đang bị khóa"}
             </p>
 
             <p className="mt-1 text-sm font-semibold opacity-90">
@@ -394,9 +538,9 @@ function SessionInfoCard({ session, stats, permission }) {
   const statusConfig =
     session.sessionStatus === "FINISHED"
       ? {
-          text: "Đã kết thúc",
-          className: "bg-emerald-100 text-emerald-700",
-          dot: "bg-emerald-600",
+          text: "Đã khóa trong hệ thống",
+          className: "bg-red-100 text-red-700",
+          dot: "bg-red-600",
         }
       : permission.canEdit
         ? {
@@ -404,11 +548,17 @@ function SessionInfoCard({ session, stats, permission }) {
             className: "bg-blue-100 text-blue-700",
             dot: "bg-blue-600 animate-pulse",
           }
-        : {
-            text: "Đã khóa / chưa mở",
-            className: "bg-red-100 text-red-700",
-            dot: "bg-red-600",
-          };
+        : permission.phase === "BEFORE_START"
+          ? {
+              text: "Chưa tới giờ mở",
+              className: "bg-amber-100 text-amber-700",
+              dot: "bg-amber-600",
+            }
+          : {
+              text: "Đã khóa theo thời gian",
+              className: "bg-red-100 text-red-700",
+              dot: "bg-red-600",
+            };
 
   return (
     <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-12">
@@ -438,32 +588,14 @@ function SessionInfoCard({ session, stats, permission }) {
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Lớp
-              </p>
-              <p className="mt-1 text-sm font-bold text-slate-800">
-                {session.classCode}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Phòng
-              </p>
-              <p className="mt-1 text-sm font-bold text-slate-800">
-                {session.roomName}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Giờ học
-              </p>
-              <p className="mt-1 text-sm font-bold text-slate-800">
-                {formatTime(session.startTime)} - {formatTime(session.endTime)}
-              </p>
-            </div>
+            <InfoMiniCard label="Lớp" value={session.classCode} />
+            <InfoMiniCard label="Phòng" value={session.roomName} />
+            <InfoMiniCard
+              label="Giờ học"
+              value={`${formatTime(session.startTime)} - ${formatTime(
+                session.endTime
+              )}`}
+            />
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
@@ -587,7 +719,7 @@ function AttendanceTable({
           </h3>
           <p className="text-sm font-medium text-slate-500">
             {canEdit
-              ? "Có thể cập nhật trạng thái điểm danh thủ công trong thời gian cho phép."
+              ? "Có thể cập nhật Có mặt / Đi trễ / Vắng thủ công trong thời gian cho phép."
               : "Điểm danh đã khóa, chỉ có thể xem dữ liệu."}
           </p>
         </div>
@@ -614,7 +746,7 @@ function AttendanceTable({
 
               return (
                 <tr
-                  key={`${student.idAttendance}-${student.idStudent}`}
+                  key={`${student.idStudent}-${student.idAttendance || "new"}`}
                   className="group border-t border-slate-100 transition hover:bg-blue-50/50"
                 >
                   <td className="px-6 py-4 text-sm font-semibold text-slate-400">
@@ -654,9 +786,7 @@ function AttendanceTable({
                     <AttendanceStatusButtons
                       value={student.status}
                       disabled={!canEdit}
-                      onChange={(status) =>
-                        onChangeStatus(student.idAttendance, status)
-                      }
+                      onChange={(status) => onChangeStatus(student, status)}
                     />
                   </td>
 
@@ -675,7 +805,7 @@ function AttendanceTable({
                       value={student.note || ""}
                       disabled={!canEdit}
                       onChange={(event) =>
-                        onChangeNote(student.idAttendance, event.target.value)
+                        onChangeNote(student.idStudent, event.target.value)
                       }
                       placeholder={
                         canEdit ? "Thêm ghi chú..." : "Đã khóa ghi chú"
@@ -728,6 +858,10 @@ function EmptyState() {
   );
 }
 
+/* =========================================================
+   PAGE CHÍNH
+========================================================= */
+
 export default function TeacherAttendance() {
   const navigate = useNavigate();
   const { sessionId, id } = useParams();
@@ -751,12 +885,11 @@ export default function TeacherAttendance() {
   const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [now, setNow] = useState(() => new Date());
-  const [autoLocking, setAutoLocking] = useState(false);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setNow(new Date());
-    }, 30000);
+    }, 1000);
 
     return () => {
       window.clearInterval(intervalId);
@@ -766,6 +899,33 @@ export default function TeacherAttendance() {
   const permission = useMemo(() => {
     return getAttendancePermission(session, now);
   }, [session, now]);
+
+  const autoTimeMessage = useMemo(() => {
+    if (!session?.idSession) return "";
+
+    if (permission.phase === "BEFORE_START") {
+      return `Điểm danh thủ công chưa mở. Hệ thống sẽ tự mở lúc ${
+        permission.startAt ? formatDateTimeText(permission.startAt) : "--"
+      }.`;
+    }
+
+    if (permission.phase === "OPEN") {
+      return `Điểm danh thủ công đang mở. Hệ thống sẽ tự khóa lúc ${
+        permission.closeAt ? formatDateTimeText(permission.closeAt) : "--"
+      }.`;
+    }
+
+    if (permission.phase === "CLOSED_BY_TIME") {
+      return `Đã đến mốc khóa điểm danh trước giờ kết thúc ${ATTENDANCE_CLOSE_BEFORE_END_MINUTES} phút.`;
+    }
+
+    return "";
+  }, [
+    session?.idSession,
+    permission.phase,
+    permission.startAt,
+    permission.closeAt,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -856,59 +1016,6 @@ export default function TeacherAttendance() {
     };
   }, [activeSessionId, teacherId, refreshKey]);
 
-  useEffect(() => {
-    if (
-      !activeSessionId ||
-      !session?.idSession ||
-      autoLocking ||
-      session.sessionStatus === "FINISHED" ||
-      permission.phase !== "CLOSED_BY_TIME"
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function autoLockAttendance() {
-      try {
-        setAutoLocking(true);
-        await updateTeacherSessionStatus(activeSessionId, "FINISHED");
-
-        if (!cancelled) {
-          setSuccessMessage(
-            `Đã tự động khóa điểm danh vì đã đến mốc trước giờ kết thúc ${ATTENDANCE_CLOSE_BEFORE_END_MINUTES} phút.`
-          );
-          setRefreshKey((prev) => prev + 1);
-        }
-      } catch (error) {
-        console.error("Lỗi tự động khóa điểm danh:", error);
-
-        if (!cancelled) {
-          setMessage(
-            error.message ||
-              "Đã hết thời gian điểm danh nhưng hệ thống chưa khóa được buổi học."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setAutoLocking(false);
-        }
-      }
-    }
-
-    autoLockAttendance();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeSessionId,
-    session?.idSession,
-    session.sessionStatus,
-    permission.phase,
-    autoLocking,
-  ]);
-
   const stats = useMemo(() => {
     const total = students.length;
     const present = students.filter((item) => item.status === "PRESENT").length;
@@ -941,6 +1048,7 @@ export default function TeacherAttendance() {
   const handleRefresh = () => {
     setLoading(true);
     setSuccessMessage("");
+    setMessage("");
     setRefreshKey((prev) => prev + 1);
   };
 
@@ -953,50 +1061,103 @@ export default function TeacherAttendance() {
     return true;
   };
 
-  const handleChangeStatus = async (attendanceId, status) => {
-    if (!ensureCanEdit()) return;
-
-    if (!attendanceId) {
-      setMessage("Thiếu id_attendance, không thể cập nhật điểm danh.");
-      return;
-    }
-
-    const checkInTime =
-      status === "PRESENT" || status === "LATE" ? getCurrentTime() : null;
-
+  const updateLocalStudent = (studentId, status, checkInTime, method, note) => {
     setStudents((prev) =>
       prev.map((item) =>
-        item.idAttendance === attendanceId
+        item.idStudent === studentId
           ? {
               ...item,
               status,
-              checkInTime: checkInTime || item.checkInTime,
-              method: "Manual",
+              checkInTime: checkInTime || "",
+              method,
+              note: note || item.note || "",
             }
           : item
       )
     );
+  };
+
+  const handleChangeStatus = async (student, status) => {
+    if (!ensureCanEdit()) return;
+
+    if (!activeSessionId) {
+      setMessage("Thiếu sessionId, không thể cập nhật điểm danh.");
+      return;
+    }
+
+    if (!student?.idStudent) {
+      setMessage("Thiếu id_student, không thể cập nhật điểm danh.");
+      return;
+    }
+
+    const oldStudents = students;
+    const checkInTime = getManualCheckInTimeByStatus(status, session);
+    const manualMethod = getManualMethodByStatus(status);
+    const manualNote = getManualNoteByStatus(status);
+
+    updateLocalStudent(
+      student.idStudent,
+      status,
+      checkInTime,
+      manualMethod,
+      manualNote
+    );
 
     try {
-      await updateTeacherAttendance(attendanceId, {
-        status,
-        check_in_time: checkInTime,
-      });
+      /*
+        Nếu đã có id_attendance:
+        - update trực tiếp bản ghi đó.
+      */
+      if (student.idAttendance) {
+        await updateTeacherAttendance(student.idAttendance, {
+          status,
+          check_in_time: checkInTime,
+          note: manualNote,
+        });
+      } else {
+        /*
+          Nếu chưa có id_attendance:
+          - dùng bulk để backend tạo mới bản ghi điểm danh.
+          - backend cần hỗ trợ upsert theo id_session + id_student.
+        */
+        await updateTeacherAttendanceBulk(activeSessionId, {
+          attendances: [
+            {
+              id_attendance: null,
+              id_student: student.idStudent,
+              status,
+              check_in_time: checkInTime,
+              note: manualNote,
+            },
+          ],
+        });
+      }
 
       setMessage("");
+
+      setSuccessMessage(
+        status === "PRESENT"
+          ? "Đã chuyển sang Có mặt. Thời gian điểm danh được đặt bằng giờ bắt đầu buổi học."
+          : status === "LATE"
+            ? "Đã chuyển sang Đi trễ. Thời gian điểm danh được đặt bằng giờ hiện tại."
+            : "Đã chuyển sang Vắng. Thời gian điểm danh đã được xóa."
+      );
+
+      setRefreshKey((prev) => prev + 1);
     } catch (error) {
       console.error("Lỗi cập nhật nhanh điểm danh:", error);
+
+      setStudents(oldStudents);
       setMessage(error.message || "Không thể cập nhật trạng thái điểm danh.");
-      setRefreshKey((prev) => prev + 1);
     }
   };
 
-  const handleChangeNote = (attendanceId, note) => {
+  const handleChangeNote = (studentId, note) => {
     if (!permission.canEdit) return;
 
     setStudents((prev) =>
       prev.map((item) =>
-        item.idAttendance === attendanceId
+        item.idStudent === studentId
           ? {
               ...item,
               note,
@@ -1019,16 +1180,25 @@ export default function TeacherAttendance() {
       setMessage("");
       setSuccessMessage("");
 
-      const attendances = students.map((item) => ({
-        id_attendance: item.idAttendance,
-        id_student: item.idStudent,
-        status: item.status,
-        check_in_time:
-          item.status === "PRESENT" || item.status === "LATE"
-            ? item.checkInTime || getCurrentTime()
-            : null,
-        note: item.note || null,
-      }));
+      const attendances = students
+        .filter((item) => item.idStudent)
+        .map((item) => {
+          let checkInTime = null;
+
+          if (item.status === "PRESENT") {
+            checkInTime = item.checkInTime || padTime(session.startTime);
+          } else if (item.status === "LATE") {
+            checkInTime = item.checkInTime || getCurrentTime();
+          }
+
+          return {
+            id_attendance: item.idAttendance || null,
+            id_student: item.idStudent,
+            status: item.status,
+            check_in_time: checkInTime,
+            note: item.note || getManualNoteByStatus(item.status),
+          };
+        });
 
       await updateTeacherAttendanceBulk(activeSessionId, {
         attendances,
@@ -1108,9 +1278,9 @@ export default function TeacherAttendance() {
                 </h2>
 
                 <p className="mt-2 max-w-2xl text-sm text-blue-100">
-                  Chỉ cho phép điểm danh thủ công trong thời gian buổi học và tự
-                  khóa trước giờ kết thúc {ATTENDANCE_CLOSE_BEFORE_END_MINUTES}{" "}
-                  phút.
+                  Có thể chỉnh thủ công Vắng / Có mặt / Đi trễ trong thời gian
+                  cho phép. Khi chuyển sang Có mặt, thời gian sẽ lấy giờ bắt đầu
+                  buổi học.
                 </p>
               </div>
 
@@ -1188,12 +1358,12 @@ export default function TeacherAttendance() {
             </div>
           )}
 
-          {successMessage && (
+          {(successMessage || autoTimeMessage) && (
             <div className="mb-5 flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
               <span className="material-symbols-outlined text-[20px]">
                 check_circle
               </span>
-              <span>{successMessage}</span>
+              <span>{successMessage || autoTimeMessage}</span>
             </div>
           )}
 

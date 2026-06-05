@@ -3,21 +3,273 @@ import db from "../config/db.js";
 
 const router = express.Router();
 
+/* =========================================================
+   FILE: subjectRoutes.js
+   ---------------------------------------------------------
+   Chức năng:
+   - Lấy danh sách môn học + thống kê
+   - Lấy chi tiết môn học
+   - Thêm môn học
+   - Cập nhật môn học
+   - Xóa môn học
+
+   LƯU Ý DATABASE:
+   Database mới dùng tên bảng chữ thường:
+   - subject
+   - courseclass
+   - teacher
+
+   THỨ TỰ ROUTE:
+   1. GET    /api/subjects
+   2. GET    /api/subjects/:id
+   3. POST   /api/subjects
+   4. PUT    /api/subjects/:id
+   5. DELETE /api/subjects/:id
+========================================================= */
+
+
+/* =========================================================
+   1. HẰNG SỐ VÀ HELPER
+========================================================= */
+
 /*
 |--------------------------------------------------------------------------
-| API: Lấy danh sách môn học + thống kê
+| VALID_SORTS
 |--------------------------------------------------------------------------
-| GET /api/subjects
+| Chức năng:
+| - Danh sách kiểu sắp xếp hợp lệ.
 |--------------------------------------------------------------------------
 */
+const VALID_SORTS = [
+  "newest",
+  "credits_desc",
+  "credits_asc",
+  "name_az",
+  "name_za",
+];
+
+/*
+|--------------------------------------------------------------------------
+| VALID_STATUS_FILTERS
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Bộ lọc trạng thái giảng dạy của môn học.
+| - ACTIVE: môn đang có lớp học phần OPEN.
+| - INACTIVE: môn chưa có lớp học phần OPEN.
+|--------------------------------------------------------------------------
+*/
+const VALID_STATUS_FILTERS = ["", "ACTIVE", "INACTIVE"];
+
+/*
+|--------------------------------------------------------------------------
+| normalizeText()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuẩn hóa chuỗi.
+| - Tránh lỗi undefined/null.
+| - Xóa khoảng trắng đầu/cuối.
+|--------------------------------------------------------------------------
+*/
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+/*
+|--------------------------------------------------------------------------
+| toNull()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuyển chuỗi rỗng thành null trước khi lưu MySQL.
+|--------------------------------------------------------------------------
+*/
+function toNull(value) {
+  const text = normalizeText(value);
+  return text === "" ? null : text;
+}
+
+/*
+|--------------------------------------------------------------------------
+| toPositiveInt()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuyển dữ liệu thành số nguyên dương.
+| - Dùng cho credits, page, limit.
+|--------------------------------------------------------------------------
+*/
+function toPositiveInt(value, defaultValue = 1) {
+  const number = Number(value);
+
+  if (!Number.isInteger(number) || number <= 0) {
+    return defaultValue;
+  }
+
+  return number;
+}
+
+/*
+|--------------------------------------------------------------------------
+| sendServerError()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Chuẩn hóa lỗi server trả về frontend.
+|--------------------------------------------------------------------------
+*/
+function sendServerError(res, message, error) {
+  return res.status(500).json({
+    message,
+    error: error.message,
+    code: error.code,
+  });
+}
+
+/*
+|--------------------------------------------------------------------------
+| validateSubjectPayload()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra dữ liệu thêm/sửa môn học.
+|--------------------------------------------------------------------------
+*/
+function validateSubjectPayload({ subject_code, subject_name, credits }) {
+  if (!subject_code || !subject_name) {
+    return {
+      valid: false,
+      message: "Vui lòng nhập mã môn học và tên môn học",
+    };
+  }
+
+  if (!Number.isInteger(credits) || credits <= 0) {
+    return {
+      valid: false,
+      message: "Số tín chỉ phải là số nguyên lớn hơn 0",
+    };
+  }
+
+  return {
+    valid: true,
+    message: "",
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| buildOrderSql()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Tạo câu ORDER BY theo lựa chọn sort từ frontend.
+|--------------------------------------------------------------------------
+*/
+function buildOrderSql(sort) {
+  if (sort === "credits_desc") {
+    return "ORDER BY s.credits DESC, s.id_subject DESC";
+  }
+
+  if (sort === "credits_asc") {
+    return "ORDER BY s.credits ASC, s.id_subject DESC";
+  }
+
+  if (sort === "name_az") {
+    return "ORDER BY s.subject_name ASC";
+  }
+
+  if (sort === "name_za") {
+    return "ORDER BY s.subject_name DESC";
+  }
+
+  return "ORDER BY s.id_subject DESC";
+}
+
+/*
+|--------------------------------------------------------------------------
+| checkSubjectExists()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra môn học có tồn tại theo id_subject.
+|--------------------------------------------------------------------------
+*/
+async function checkSubjectExists(id) {
+  const [subjects] = await db.query(
+    `
+    SELECT id_subject
+    FROM subject
+    WHERE id_subject = ?
+    LIMIT 1
+    `,
+    [id]
+  );
+
+  return subjects.length > 0;
+}
+
+/*
+|--------------------------------------------------------------------------
+| checkSubjectCodeDuplicate()
+|--------------------------------------------------------------------------
+| Chức năng:
+| - Kiểm tra mã môn học đã tồn tại chưa.
+| - Khi cập nhật thì bỏ qua chính môn học hiện tại.
+|--------------------------------------------------------------------------
+*/
+async function checkSubjectCodeDuplicate(subjectCode, ignoreSubjectId = null) {
+  const params = [subjectCode];
+
+  let sql = `
+    SELECT id_subject
+    FROM subject
+    WHERE subject_code = ?
+  `;
+
+  if (ignoreSubjectId) {
+    sql += `
+      AND id_subject <> ?
+    `;
+    params.push(ignoreSubjectId);
+  }
+
+  sql += `
+    LIMIT 1
+  `;
+
+  const [rows] = await db.query(sql, params);
+
+  return rows.length > 0;
+}
+
+
+/* =========================================================
+   2. API: LẤY DANH SÁCH MÔN HỌC + THỐNG KÊ
+   ---------------------------------------------------------
+   Method: GET
+   URL: /api/subjects
+
+   Query:
+   - search: tìm theo mã môn, tên môn, mô tả
+   - status: ACTIVE / INACTIVE
+   - sort: newest / credits_desc / credits_asc / name_az / name_za
+   - page
+   - limit
+========================================================= */
 router.get("/", async (req, res) => {
   try {
-    const search = req.query.search || "";
-    const status = req.query.status || "";
-    const sort = req.query.sort || "newest";
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 10);
+    const search = normalizeText(req.query.search);
+    const status = normalizeText(req.query.status).toUpperCase();
+    const sort = normalizeText(req.query.sort) || "newest";
+
+    const page = toPositiveInt(req.query.page, 1);
+    const limit = toPositiveInt(req.query.limit, 10);
     const offset = (page - 1) * limit;
+
+    if (!VALID_STATUS_FILTERS.includes(status)) {
+      return res.status(400).json({
+        message: "Trạng thái lọc môn học không hợp lệ",
+      });
+    }
+
+    if (!VALID_SORTS.includes(sort)) {
+      return res.status(400).json({
+        message: "Kiểu sắp xếp môn học không hợp lệ",
+      });
+    }
 
     let whereSql = `
       WHERE
@@ -30,57 +282,59 @@ router.get("/", async (req, res) => {
 
     const params = [`%${search}%`, `%${search}%`, `%${search}%`];
 
+    /*
+      ACTIVE:
+      - Môn học đang có ít nhất 1 lớp học phần trạng thái OPEN.
+    */
     if (status === "ACTIVE") {
       whereSql += `
         AND EXISTS (
           SELECT 1
-          FROM CourseClass cc_active
+          FROM courseclass cc_active
           WHERE cc_active.id_subject = s.id_subject
-          AND cc_active.status = 'OPEN'
+            AND cc_active.status = 'OPEN'
         )
       `;
     }
 
+    /*
+      INACTIVE:
+      - Môn học chưa có lớp học phần OPEN.
+    */
     if (status === "INACTIVE") {
       whereSql += `
         AND NOT EXISTS (
           SELECT 1
-          FROM CourseClass cc_active
+          FROM courseclass cc_active
           WHERE cc_active.id_subject = s.id_subject
-          AND cc_active.status = 'OPEN'
+            AND cc_active.status = 'OPEN'
         )
       `;
     }
 
-    let orderSql = `ORDER BY s.id_subject DESC`;
+    const orderSql = buildOrderSql(sort);
 
-    if (sort === "credits_desc") {
-      orderSql = `ORDER BY s.credits DESC, s.id_subject DESC`;
-    }
-
-    if (sort === "credits_asc") {
-      orderSql = `ORDER BY s.credits ASC, s.id_subject DESC`;
-    }
-
-    if (sort === "name_az") {
-      orderSql = `ORDER BY s.subject_name ASC`;
-    }
-
-    if (sort === "name_za") {
-      orderSql = `ORDER BY s.subject_name DESC`;
-    }
-
+    /*
+      1. Đếm tổng số môn học theo bộ lọc
+    */
     const [countRows] = await db.query(
       `
       SELECT COUNT(*) AS total
-      FROM Subject s
+      FROM subject s
       ${whereSql}
       `,
       params
     );
 
-    const total = countRows[0]?.total || 0;
+    const total = Number(countRows[0]?.total || 0);
 
+    /*
+      2. Lấy danh sách môn học
+      - total_course_classes: tổng số lớp học phần của môn đó
+      - open_course_classes: số lớp đang mở
+      - teaching_status: ACTIVE nếu có lớp OPEN
+      - teacher_names: danh sách giáo viên đang dạy môn đó
+    */
     const [subjects] = await db.query(
       `
       SELECT
@@ -92,15 +346,26 @@ router.get("/", async (req, res) => {
 
         COUNT(DISTINCT cc.id_course_class) AS total_course_classes,
 
-        SUM(
-          CASE
-            WHEN cc.status = 'OPEN' THEN 1
-            ELSE 0
-          END
+        COALESCE(
+          SUM(
+            CASE
+              WHEN cc.status = 'OPEN' THEN 1
+              ELSE 0
+            END
+          ),
+          0
         ) AS open_course_classes,
 
         CASE
-          WHEN SUM(CASE WHEN cc.status = 'OPEN' THEN 1 ELSE 0 END) > 0
+          WHEN COALESCE(
+            SUM(
+              CASE
+                WHEN cc.status = 'OPEN' THEN 1
+                ELSE 0
+              END
+            ),
+            0
+          ) > 0
           THEN 'ACTIVE'
           ELSE 'INACTIVE'
         END AS teaching_status,
@@ -111,10 +376,12 @@ router.get("/", async (req, res) => {
           SEPARATOR ', '
         ) AS teacher_names
 
-      FROM Subject s
-      LEFT JOIN CourseClass cc
+      FROM subject s
+
+      LEFT JOIN courseclass cc
         ON cc.id_subject = s.id_subject
-      LEFT JOIN Teacher t
+
+      LEFT JOIN teacher t
         ON t.id_teacher = cc.id_teacher
 
       ${whereSql}
@@ -133,31 +400,34 @@ router.get("/", async (req, res) => {
       [...params, limit, offset]
     );
 
+    /*
+      3. Thống kê tổng quan môn học
+    */
     const [statsRows] = await db.query(
       `
       SELECT
         COUNT(*) AS total_subjects,
         ROUND(AVG(credits), 2) AS average_credits
-      FROM Subject
+      FROM subject
       `
     );
 
     const [activeRows] = await db.query(
       `
       SELECT COUNT(DISTINCT s.id_subject) AS active_subjects
-      FROM Subject s
-      INNER JOIN CourseClass cc
+      FROM subject s
+      INNER JOIN courseclass cc
         ON cc.id_subject = s.id_subject
       WHERE cc.status = 'OPEN'
       `
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       subjects,
       stats: {
-        total_subjects: statsRows[0]?.total_subjects || 0,
-        active_subjects: activeRows[0]?.active_subjects || 0,
-        average_credits: statsRows[0]?.average_credits || 0,
+        total_subjects: Number(statsRows[0]?.total_subjects || 0),
+        active_subjects: Number(activeRows[0]?.active_subjects || 0),
+        average_credits: Number(statsRows[0]?.average_credits || 0),
       },
       pagination: {
         page,
@@ -168,22 +438,17 @@ router.get("/", async (req, res) => {
     });
   } catch (error) {
     console.error("Lỗi lấy danh sách môn học:", error);
-
-    res.status(500).json({
-      message: "Lỗi lấy danh sách môn học",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi lấy danh sách môn học", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Lấy chi tiết 1 môn học
-|--------------------------------------------------------------------------
-| GET /api/subjects/:id
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   3. API: LẤY CHI TIẾT 1 MÔN HỌC
+   ---------------------------------------------------------
+   Method: GET
+   URL: /api/subjects/:id
+========================================================= */
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -196,7 +461,7 @@ router.get("/:id", async (req, res) => {
         subject_name,
         credits,
         description
-      FROM Subject
+      FROM subject
       WHERE id_subject = ?
       LIMIT 1
       `,
@@ -209,46 +474,48 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    res.status(200).json(subjects[0]);
+    return res.status(200).json(subjects[0]);
   } catch (error) {
     console.error("Lỗi lấy chi tiết môn học:", error);
-
-    res.status(500).json({
-      message: "Lỗi lấy chi tiết môn học",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi lấy chi tiết môn học", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Thêm môn học
-|--------------------------------------------------------------------------
-| POST /api/subjects
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   4. API: THÊM MÔN HỌC
+   ---------------------------------------------------------
+   Method: POST
+   URL: /api/subjects
+
+   Body:
+   - subject_code
+   - subject_name
+   - credits
+   - description
+========================================================= */
 router.post("/", async (req, res) => {
   try {
-    const { subject_code, subject_name, credits, description } = req.body;
+    const subjectCode = normalizeText(req.body.subject_code);
+    const subjectName = normalizeText(req.body.subject_name);
+    const credits = toPositiveInt(req.body.credits, 3);
+    const description = toNull(req.body.description);
 
-    if (!subject_code || !subject_name) {
+    const validation = validateSubjectPayload({
+      subject_code: subjectCode,
+      subject_name: subjectName,
+      credits,
+    });
+
+    if (!validation.valid) {
       return res.status(400).json({
-        message: "Vui lòng nhập mã môn học và tên môn học",
+        message: validation.message,
       });
     }
 
-    const [existing] = await db.query(
-      `
-      SELECT id_subject
-      FROM Subject
-      WHERE subject_code = ?
-      LIMIT 1
-      `,
-      [subject_code.trim()]
-    );
+    const isDuplicate = await checkSubjectCodeDuplicate(subjectCode);
 
-    if (existing.length > 0) {
+    if (isDuplicate) {
       return res.status(409).json({
         message: "Mã môn học đã tồn tại",
       });
@@ -256,7 +523,7 @@ router.post("/", async (req, res) => {
 
     const [result] = await db.query(
       `
-      INSERT INTO Subject (
+      INSERT INTO subject (
         subject_code,
         subject_name,
         credits,
@@ -264,15 +531,10 @@ router.post("/", async (req, res) => {
       )
       VALUES (?, ?, ?, ?)
       `,
-      [
-        subject_code.trim(),
-        subject_name.trim(),
-        Number(credits || 3),
-        description || null,
-      ]
+      [subjectCode, subjectName, credits, description]
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Thêm môn học thành công",
       id_subject: result.insertId,
     });
@@ -287,60 +549,49 @@ router.post("/", async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      message: "Lỗi thêm môn học",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi thêm môn học", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Cập nhật môn học
-|--------------------------------------------------------------------------
-| PUT /api/subjects/:id
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   5. API: CẬP NHẬT MÔN HỌC
+   ---------------------------------------------------------
+   Method: PUT
+   URL: /api/subjects/:id
+========================================================= */
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { subject_code, subject_name, credits, description } = req.body;
 
-    if (!subject_code || !subject_name) {
+    const subjectCode = normalizeText(req.body.subject_code);
+    const subjectName = normalizeText(req.body.subject_name);
+    const credits = toPositiveInt(req.body.credits, 3);
+    const description = toNull(req.body.description);
+
+    const validation = validateSubjectPayload({
+      subject_code: subjectCode,
+      subject_name: subjectName,
+      credits,
+    });
+
+    if (!validation.valid) {
       return res.status(400).json({
-        message: "Vui lòng nhập mã môn học và tên môn học",
+        message: validation.message,
       });
     }
 
-    const [subjects] = await db.query(
-      `
-      SELECT id_subject
-      FROM Subject
-      WHERE id_subject = ?
-      LIMIT 1
-      `,
-      [id]
-    );
+    const exists = await checkSubjectExists(id);
 
-    if (subjects.length === 0) {
+    if (!exists) {
       return res.status(404).json({
         message: "Không tìm thấy môn học",
       });
     }
 
-    const [duplicates] = await db.query(
-      `
-      SELECT id_subject
-      FROM Subject
-      WHERE subject_code = ?
-      AND id_subject <> ?
-      LIMIT 1
-      `,
-      [subject_code.trim(), id]
-    );
+    const isDuplicate = await checkSubjectCodeDuplicate(subjectCode, id);
 
-    if (duplicates.length > 0) {
+    if (isDuplicate) {
       return res.status(409).json({
         message: "Mã môn học đã tồn tại",
       });
@@ -348,7 +599,7 @@ router.put("/:id", async (req, res) => {
 
     await db.query(
       `
-      UPDATE Subject
+      UPDATE subject
       SET
         subject_code = ?,
         subject_name = ?,
@@ -356,16 +607,10 @@ router.put("/:id", async (req, res) => {
         description = ?
       WHERE id_subject = ?
       `,
-      [
-        subject_code.trim(),
-        subject_name.trim(),
-        Number(credits || 3),
-        description || null,
-        id,
-      ]
+      [subjectCode, subjectName, credits, description, id]
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Cập nhật môn học thành công",
     });
   } catch (error) {
@@ -379,45 +624,41 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      message: "Lỗi cập nhật môn học",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi cập nhật môn học", error);
   }
 });
 
-/*
-|--------------------------------------------------------------------------
-| API: Xóa môn học
-|--------------------------------------------------------------------------
-| DELETE /api/subjects/:id
-|--------------------------------------------------------------------------
-*/
+
+/* =========================================================
+   6. API: XÓA MÔN HỌC
+   ---------------------------------------------------------
+   Method: DELETE
+   URL: /api/subjects/:id
+
+   Logic:
+   - Nếu môn học đang được dùng trong courseclass thì không cho xóa.
+========================================================= */
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [subjects] = await db.query(
-      `
-      SELECT id_subject
-      FROM Subject
-      WHERE id_subject = ?
-      LIMIT 1
-      `,
-      [id]
-    );
+    const exists = await checkSubjectExists(id);
 
-    if (subjects.length === 0) {
+    if (!exists) {
       return res.status(404).json({
         message: "Không tìm thấy môn học",
       });
     }
 
+    /*
+      Không cho xóa môn học nếu đã có lớp học phần dùng môn này.
+      Lý do:
+      - Nếu xóa sẽ ảnh hưởng courseclass, schedule, session, attendance.
+    */
     const [courseClasses] = await db.query(
       `
       SELECT id_course_class
-      FROM CourseClass
+      FROM courseclass
       WHERE id_subject = ?
       LIMIT 1
       `,
@@ -433,23 +674,18 @@ router.delete("/:id", async (req, res) => {
 
     await db.query(
       `
-      DELETE FROM Subject
+      DELETE FROM subject
       WHERE id_subject = ?
       `,
       [id]
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Xóa môn học thành công",
     });
   } catch (error) {
     console.error("Lỗi xóa môn học:", error);
-
-    res.status(500).json({
-      message: "Lỗi xóa môn học",
-      error: error.message,
-      code: error.code,
-    });
+    return sendServerError(res, "Lỗi xóa môn học", error);
   }
 });
 
